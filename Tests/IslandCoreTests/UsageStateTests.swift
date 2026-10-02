@@ -104,3 +104,26 @@ private func report(requests: Int) -> UsageReport {
     #expect(model.usageQueueError == nil)
     model.stop()
 }
+
+@Test func latestQueueErrorBeatsCachedUnavailability() {
+    let state = UsageState.resolve(connection: .connected(at: Date()), usageAvailable: false,
+                                   queueError: "HTTP 500", report: report(requests: 0))
+    #expect(state == .queueError("HTTP 500"))
+    #expect(UsageState.issue(connection: .connected(at: Date()), usageAvailable: false, queueError: "HTTP 500")
+            == .queueError("HTTP 500"))
+}
+
+@MainActor @Test func savingANewKeyClearsQueueStatusImmediately() async throws {
+    let stub = StubTransport([.response(404, Data()), .response(200, Fixtures.data("auth-files"))])
+    let defaults = VolatileDefaults()
+    defaults.set(false, forKey: "liveQuotaEnabled")
+    let model = IslandModel(keyStore: InMemoryKeyStore(key: "old"), defaults: defaults, store: UsageStore(url: nil),
+                            clientFactory: { ManagementClient(baseURL: $0, key: $1, transport: stub) })
+    model.start()
+    for _ in 0..<1000 where model.lastUpdated == nil { try? await Task.sleep(for: .milliseconds(1)) }
+    #expect(!model.usageAvailable)
+    try model.saveKey("new")
+    #expect(model.usageAvailable)
+    #expect(model.usageQueueError == nil)
+    model.stop()
+}

@@ -398,9 +398,6 @@ private struct UsagePage: View {
             .minimumScaleFactor(0.85)
     }
 
-    private func note(_ text: String) -> some View {
-        Text(text).font(.system(size: 10)).foregroundStyle(Theme.secondary).lineLimit(2)
-    }
 }
 
 /// Today / 7d / 30d.

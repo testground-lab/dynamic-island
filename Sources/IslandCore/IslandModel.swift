@@ -91,6 +91,7 @@ private let usageLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: 
         connection = .connecting
         live = [:]
         liveAttempts = [:]
+        resetUsageStatus()
         refreshNow()
     }
     public func clearKey() throws {
@@ -151,13 +152,13 @@ private let usageLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: 
                     }
                 }
             } catch ManagementError.unauthorized {
-                logQueueFailure("401 unauthorized")
+                if generation == current, !Task.isCancelled { logQueueFailure("401 unauthorized") }
                 throw ManagementError.unauthorized
             } catch {
                 guard !Task.isCancelled else { throw CancellationError() }
                 let reason = Self.describe(error)
                 queueError = reason
-                logQueueFailure(reason)
+                if generation == current { logQueueFailure(reason) }
                 drain = nil
             }
             guard generation == current else { return false }

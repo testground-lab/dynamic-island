@@ -36,8 +36,9 @@ public enum UsageState: Equatable, Sendable {
         case .failed(let reason): return .pollFailed(reason)
         case .connecting, .connected: break
         }
-        if !usageAvailable { return .queueUnavailable }
+        // The latest failure is more current than a cached 404.
         if let queueError { return .queueError(queueError) }
+        if !usageAvailable { return .queueUnavailable }
         return nil
     }
 

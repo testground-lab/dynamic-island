@@ -108,7 +108,7 @@ public struct IslandInteraction: Equatable, Sendable {
             guard !isExpanded else { return [] }
             suppressed = false
             presentation = .expanded(byHover: false)
-            return [.haptic]
+            return [.haptic, .takeFocus]
         case .close:
             return isExpanded ? close() : []
         case .next, .previous:
@@ -138,95 +138,89 @@ public enum ScrollPhase: Equatable, Sendable {
     case momentum
 }
 
-/// Direction-normalized deltas are accumulated once per physical gesture.
+/// Interprets a complete movement vector rather than committing to an axis early.
+/// A stroke can change direction until it produces an action; afterward it is consumed.
 public struct ScrollGestureRecognizer: Equatable, Sendable {
-    private enum Axis: Equatable, Sendable { case horizontal, vertical }
-    private enum Kind: Equatable, Sendable { case phased, wheel }
+    private struct Stroke: Equatable, Sendable {
+        let startedAt: TimeInterval
+        let permitsVertical: Bool
+        var lastEventAt: TimeInterval
+        var dx = 0.0
+        var dy = 0.0
+        var consumed = false
 
-    private var kind: Kind?
-    private var axis: Axis?
-    private var pullTotal = 0.0
-    private var swipeTotal = 0.0
-    private var previousTime: TimeInterval?
-    private var verticalAllowedAtStart = false
-    private var fired = false
+        init(time: TimeInterval, permitsVertical: Bool) {
+            startedAt = time
+            lastEventAt = time
+            self.permitsVertical = permitsVertical
+        }
+    }
+
+    private var stroke: Stroke?
+    private static let coneHalfAngle = Double.pi / 6
+    private static let angleTolerance = 4 * Double.ulpOfOne
 
     public init() {}
 
-    /// Positive pull opens; positive swipe moves to the previous tab.
-    /// The caller normalizes direction and scales non-precise wheel deltas by 10.
+    /// Supply screen-direction deltas: down is positive pull, right is positive swipe.
+    /// Phased input starts a stroke explicitly; unphased input separates strokes by idle gaps.
+    /// Vertical permission belongs to the stroke's first event, not later pointer movement.
     public mutating func feed(
         pull: Double, swipe: Double, time: TimeInterval, phase: ScrollPhase,
         precise: Bool, expanded: Bool, verticalAllowed: Bool
     ) -> ScrollGestureAction? {
-        guard pull.isFinite, swipe.isFinite, time.isFinite else {
-            self = Self()
-            return nil
-        }
+        guard pull.isFinite, swipe.isFinite, time.isFinite else { return nil }
+
         switch phase {
         case .ended, .momentum:
-            self = Self()
+            stroke = nil
             return nil
         case .began:
-            begin(.phased, verticalAllowed: verticalAllowed)
-        case .changed:
-            if kind != .phased { begin(.phased, verticalAllowed: verticalAllowed) }
+            stroke = Stroke(time: time, permitsVertical: verticalAllowed)
         case .none:
-            let elapsed = previousTime.map { time - $0 } ?? .infinity
-            if kind != .wheel || elapsed > 0.35 || elapsed < 0 {
-                begin(.wheel, verticalAllowed: verticalAllowed)
+            if stroke.map({ time - $0.lastEventAt > 0.3 }) ?? true {
+                stroke = Stroke(time: time, permitsVertical: verticalAllowed)
             }
+        case .changed:
+            break
         }
-        previousTime = time
-        guard !fired else { return nil }
-
-        switch axis {
-        case .horizontal:
-            swipeTotal += swipe
-        case .vertical:
-            pullTotal += pull
-        case nil:
-            pullTotal += pull
-            swipeTotal += swipe
-        }
-        guard pullTotal.isFinite, swipeTotal.isFinite else {
-            self = Self()
+        guard var movement = stroke else { return nil }
+        if movement.consumed {
+            movement.lastEventAt = time
+            stroke = movement
             return nil
         }
 
-        if axis == nil {
-            let verticalEnabled = kind == .phased ? verticalAllowedAtStart : verticalAllowed
-            if precise, abs(swipeTotal) >= 4, abs(swipeTotal) >= 1.5 * abs(pullTotal) {
-                axis = .horizontal
-            } else if verticalEnabled, abs(pullTotal) >= 4,
-                abs(pullTotal) >= 1.5 * abs(swipeTotal)
-            {
-                axis = .vertical
-            }
-        }
-
-        let action: ScrollGestureAction?
-        switch axis {
-        case .horizontal where abs(swipeTotal) >= 40:
-            action = swipeTotal < 0 ? .next : .previous
-        case .vertical where abs(pullTotal) >= 24:
-            if pullTotal > 0, !expanded {
-                action = .open
-            } else if pullTotal < 0, expanded {
-                action = .close
-            } else {
-                action = nil
-            }
-        default:
-            action = nil
-        }
-        if action != nil { fired = true }
+        let dx = movement.dx + swipe
+        let dy = movement.dy + pull
+        // An unrepresentable displacement is discarded just like an invalid delta.
+        guard dx.isFinite, dy.isFinite else { return nil }
+        movement.dx = dx
+        movement.dy = dy
+        movement.lastEventAt = time
+        let action = Self.action(for: movement, precise: precise, expanded: expanded)
+        movement.consumed = action != nil
+        stroke = movement
         return action
     }
 
-    private mutating func begin(_ kind: Kind, verticalAllowed: Bool) {
-        self = Self()
-        self.kind = kind
-        verticalAllowedAtStart = verticalAllowed
+    private static func action(
+        for movement: Stroke, precise: Bool, expanded: Bool
+    ) -> ScrollGestureAction? {
+        guard hypot(movement.dx, movement.dy) >= 30 else { return nil }
+        let horizontalDistance = abs(movement.dx)
+        let verticalDistance = abs(movement.dy)
+        let coneBoundary = coneHalfAngle + angleTolerance
+
+        if atan2(horizontalDistance, verticalDistance) <= coneBoundary {
+            guard movement.permitsVertical else { return nil }
+            if movement.dy > 0, !expanded { return .open }
+            if movement.dy < 0, expanded { return .close }
+        } else if precise, horizontalDistance >= 50,
+            atan2(verticalDistance, horizontalDistance) <= coneBoundary
+        {
+            return movement.dx < 0 ? .next : .previous
+        }
+        return nil
     }
 }

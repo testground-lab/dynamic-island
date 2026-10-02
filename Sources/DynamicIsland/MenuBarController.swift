@@ -100,13 +100,14 @@ final class MenuBarController: NSObject {
 /// The dashboard in the popover: no camera, so the header is one row.
 struct PopoverDashboard: View {
     let model: IslandModel
-    var scrollable = true
+    var snapshotOffset: CGFloat?
     var openSettings: () -> Void
-    @State var tab: IslandTab = .limits
     @State var range: UsageRange = .today
 
     var body: some View {
-        DashboardView(model: model, tab: $tab, range: $range, headerHeight: 22, scrollable: scrollable, openSettings: openSettings)
+        DashboardView(model: model, range: $range, headerHeight: 22,
+                      maxContentHeight: ((NSScreen.main?.visibleFrame.height ?? 800) * 0.6).rounded(),
+                      snapshotOffset: snapshotOffset, openSettings: openSettings)
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
             .background(.black)

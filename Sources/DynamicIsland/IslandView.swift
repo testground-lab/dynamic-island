@@ -5,13 +5,15 @@ import SwiftUI
 @MainActor @Observable
 final class IslandUIState {
     var presentation: IslandPresentation = .collapsed
-    var tab: IslandTab = .limits
     var usageRange: UsageRange = .today
     /// Size of the hardware notch (or a stand-in on displays without one).
     var notchSize = CGSize(width: 190, height: 32)
     /// Island frame in window coordinates (top-left origin), used for hit-testing.
     var islandFrame: CGRect = .zero
     var panelHeight: CGFloat = IslandMetrics.panelSize.height
+    var maxContentHeight: CGFloat = DashboardMetrics.defaultMaxContentHeight
+    /// Snapshot only: render the page scrolled down by this much.
+    var snapshotOffset: CGFloat?
     /// Offscreen rendering (no scroll views, see `Snapshots`).
     var isSnapshot = false
 
@@ -78,12 +80,11 @@ struct IslandView: View {
     private var expandedContent: some View {
         @Bindable var ui = ui
         let shoulder = NotchShape.shoulder(height: 200)
-        return DashboardView(model: model, tab: $ui.tab, range: $ui.usageRange,
+        return DashboardView(model: model, range: $ui.usageRange,
                              headerHeight: ui.notchSize.height,
                              cameraGap: ui.notchSize.width,
-                             maxContentHeight: min(DashboardMetrics.contentBudget,
-                                                   ui.panelHeight - ui.notchSize.height - 40),
-                             scrollable: !ui.isSnapshot,
+                             maxContentHeight: min(ui.maxContentHeight, ui.panelHeight - ui.notchSize.height - 40),
+                             snapshotOffset: ui.isSnapshot ? (ui.snapshotOffset ?? 0) : nil,
                              openSettings: openSettings)
             .padding(.horizontal, shoulder + IslandMetrics.contentInset)
             .padding(.bottom, IslandMetrics.bottomInset)

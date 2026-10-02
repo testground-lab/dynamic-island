@@ -107,8 +107,6 @@ public struct IslandInteraction: Equatable, Sendable {
             return [.haptic, .takeFocus]
         case .close:
             return isExpanded ? close() : []
-        case .next, .previous:
-            return []
         }
     }
 
@@ -122,8 +120,6 @@ public struct IslandInteraction: Equatable, Sendable {
 public enum ScrollGestureAction: Equatable, Sendable {
     case open
     case close
-    case next
-    case previous
 }
 
 public enum ScrollPhase: Equatable, Sendable {
@@ -134,7 +130,8 @@ public enum ScrollPhase: Equatable, Sendable {
     case momentum
 }
 
-/// Interprets a complete movement vector rather than committing to an axis early.
+/// Recognizes vertical strokes of at least 30 points within a 30° cone of the vertical axis.
+/// Sideways movement only rejects diagonal or horizontal strokes; it never produces an action.
 /// A stroke can change direction until it produces an action; afterward it is consumed.
 public struct ScrollGestureRecognizer: Equatable, Sendable {
     private struct Stroke: Equatable, Sendable {
@@ -156,14 +153,14 @@ public struct ScrollGestureRecognizer: Equatable, Sendable {
 
     public init() {}
 
-    /// Supply screen-direction deltas: down is positive pull, right is positive swipe.
-    /// Phased input starts a stroke explicitly; unphased input separates strokes by idle gaps.
+    /// Supply screen-direction deltas: down is positive pull, right is positive sideways.
+    /// Phased input starts a stroke explicitly; unphased input separates strokes by gaps over 0.3 s.
     /// Vertical permission belongs to the stroke's first event, not later pointer movement.
     public mutating func feed(
-        pull: Double, swipe: Double, time: TimeInterval, phase: ScrollPhase,
+        pull: Double, sideways: Double, time: TimeInterval, phase: ScrollPhase,
         precise: Bool, expanded: Bool, verticalAllowed: Bool
     ) -> ScrollGestureAction? {
-        guard pull.isFinite, swipe.isFinite, time.isFinite else { return nil }
+        guard pull.isFinite, sideways.isFinite, time.isFinite else { return nil }
 
         switch phase {
         case .ended, .momentum:
@@ -185,21 +182,21 @@ public struct ScrollGestureRecognizer: Equatable, Sendable {
             return nil
         }
 
-        let dx = movement.dx + swipe
+        let dx = movement.dx + sideways
         let dy = movement.dy + pull
         // An unrepresentable displacement is discarded just like an invalid delta.
         guard dx.isFinite, dy.isFinite else { return nil }
         movement.dx = dx
         movement.dy = dy
         movement.lastEventAt = time
-        let action = Self.action(for: movement, precise: precise, expanded: expanded)
+        let action = Self.action(for: movement, expanded: expanded)
         movement.consumed = action != nil
         stroke = movement
         return action
     }
 
     private static func action(
-        for movement: Stroke, precise: Bool, expanded: Bool
+        for movement: Stroke, expanded: Bool
     ) -> ScrollGestureAction? {
         guard hypot(movement.dx, movement.dy) >= 30 else { return nil }
         let horizontalDistance = abs(movement.dx)
@@ -210,10 +207,6 @@ public struct ScrollGestureRecognizer: Equatable, Sendable {
             guard movement.permitsVertical else { return nil }
             if movement.dy > 0, !expanded { return .open }
             if movement.dy < 0, expanded { return .close }
-        } else if precise, horizontalDistance >= 50,
-            atan2(verticalDistance, horizontalDistance) <= coneBoundary
-        {
-            return movement.dx < 0 ? .next : .previous
         }
         return nil
     }

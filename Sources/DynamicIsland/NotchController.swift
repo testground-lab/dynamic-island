@@ -128,7 +128,9 @@ final class NotchController {
         cameraRect = notch
         ui.notchSize = notch.size
         // Shorter screens (e.g. "Larger Text" scaling) get a shorter panel.
-        ui.panelHeight = min(IslandMetrics.panelSize.height, screen.frame.height - 40)
+        // The page scrolls past ~60% of the visible screen height.
+        ui.maxContentHeight = (screen.visibleFrame.height * 0.6).rounded()
+        ui.panelHeight = min(notch.height + ui.maxContentHeight + 80, screen.frame.height - 40)
         let size = CGSize(width: IslandMetrics.panelSize.width, height: ui.panelHeight)
         let frame = CGRect(x: (notch.midX - size.width / 2).rounded(), y: screen.frame.maxY - size.height,
                            width: size.width, height: size.height)
@@ -250,28 +252,22 @@ final class NotchController {
         else if event.phase.contains(.ended) || event.phase.contains(.cancelled) { phase = .ended }
         else if event.phase.isEmpty { phase = .none }
         else { phase = .changed }
-        // Normalise so positive = fingers moving down / right, whatever the
+        // Normalise so positive = fingers moving down, whatever the
         // natural-scrolling setting; wheels get a coarser step.
         let sign: Double = event.isDirectionInvertedFromDevice ? 1 : -1
         let scale: Double = event.hasPreciseScrollingDeltas ? 1 : 30
         let expanded = interaction.isExpanded
-        // Open pages may scroll vertically; there only the header band closes.
+        // The open page scrolls; only a stroke that starts on the header row
+        // may close the island. Anywhere else the event goes to the scroll view.
         let inHeader = NSEvent.mouseLocation.y >= panel.frame.maxY - ui.notchSize.height
         let action = gesture.feed(pull: Double(event.scrollingDeltaY) * sign * scale,
-                                  swipe: Double(event.scrollingDeltaX) * sign * scale,
+                                  sideways: Double(event.scrollingDeltaX) * sign * scale,
                                   time: event.timestamp, phase: phase,
                                   precise: event.hasPreciseScrollingDeltas,
                                   expanded: expanded, verticalAllowed: !expanded || inHeader)
         guard let action else { return !expanded } // nothing else scrolls on the closed island
-        switch action {
-        case .open, .close:
-            send { $0.gesture(action) }
-            return true
-        case .next, .previous:
-            guard expanded else { return false }
-            withAnimation(Theme.emphasis) { ui.tab = action == .next ? ui.tab.next : ui.tab.previous }
-            return true
-        }
+        send { $0.gesture(action) }
+        return true
     }
 
     // MARK: Pointer

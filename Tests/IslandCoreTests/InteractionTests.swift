@@ -129,16 +129,12 @@ func closingInsideSuppressesHoverUntilPointerLeaves(_ closingMethod: Int) {
     #expect(outside.otherAppActivated().isEmpty)
 }
 
-@Test func gesturesOpenWithFocusAndIgnoreTabActions() {
+@Test func gesturesOpenWithFocusAndClose() {
     var state = IslandInteraction()
-    #expect(state.gesture(.next).isEmpty)
-    #expect(state.gesture(.previous).isEmpty)
     #expect(state.gesture(.close).isEmpty)
     #expect(state.gesture(.open) == [.haptic, .takeFocus])
     #expect(state.presentation == .expanded(byHover: false))
     #expect(state.gesture(.open).isEmpty)
-    #expect(state.gesture(.next).isEmpty)
-    #expect(state.gesture(.previous).isEmpty)
     #expect(state.isExpanded)
     #expect(state.gesture(.close) == [.cancel(.hoverOpen), .cancel(.exitClose)])
     #expect(!state.isExpanded)
@@ -153,12 +149,12 @@ func closingInsideSuppressesHoverUntilPointerLeaves(_ closingMethod: Int) {
 
 extension ScrollGestureRecognizer {
     fileprivate mutating func sample(
-        pull: Double = 0, swipe: Double = 0, time: TimeInterval = 0,
+        pull: Double = 0, sideways: Double = 0, time: TimeInterval = 0,
         phase: ScrollPhase = .changed, precise: Bool = true,
         expanded: Bool = false, verticalAllowed: Bool = true
     ) -> ScrollGestureAction? {
         feed(
-            pull: pull, swipe: swipe, time: time, phase: phase, precise: precise,
+            pull: pull, sideways: sideways, time: time, phase: phase, precise: precise,
             expanded: expanded, verticalAllowed: verticalAllowed)
     }
 }
@@ -178,7 +174,7 @@ extension ScrollGestureRecognizer {
 @Test func verticalThresholdUsesWholeVectorLength() {
     var recognizer = ScrollGestureRecognizer()
     #expect(
-        recognizer.sample(pull: 29, swipe: 29 * tan(20 * Double.pi / 180), phase: .began) == .open)
+        recognizer.sample(pull: 29, sideways: 29 * tan(20 * Double.pi / 180), phase: .began) == .open)
 }
 
 @Test(arguments: [-30.0, 0, 30])
@@ -186,55 +182,40 @@ func verticalConeIncludesItsBoundary(_ degrees: Double) {
     let angle = degrees * Double.pi / 180
     var recognizer = ScrollGestureRecognizer()
     #expect(
-        recognizer.sample(pull: 40 * cos(angle), swipe: 40 * sin(angle), phase: .began) == .open)
+        recognizer.sample(pull: 40 * cos(angle), sideways: 40 * sin(angle), phase: .began) == .open)
     #expect(
         recognizer.sample(
-            pull: -40 * cos(angle), swipe: 40 * sin(angle), phase: .began, expanded: true) == .close
+            pull: -40 * cos(angle), sideways: 40 * sin(angle), phase: .began, expanded: true) == .close
     )
 }
 
-@Test(arguments: [-1.0, 1])
-func horizontalConeIncludesBothBoundaryDirections(_ direction: Double) {
-    var recognizer = ScrollGestureRecognizer()
-    let boundaryPull = 50 * tan(Double.pi / 6)
-    let action: ScrollGestureAction = direction < 0 ? .next : .previous
-    #expect(recognizer.sample(pull: boundaryPull, swipe: direction * 50, phase: .began) == action)
-    #expect(recognizer.sample(pull: -boundaryPull, swipe: direction * 50, phase: .began) == action)
-}
-
-@Test(arguments: [30.01, 45.0, 59.99])
-func diagonalStrokeConesAreSeparated(_ degrees: Double) {
+@Test(arguments: [30.01, 45.0, 59.99, 60, 75])
+func strokesOutsideVerticalConeNeverFire(_ degrees: Double) {
     let angle = degrees * Double.pi / 180
     for horizontalSign in [-1.0, 1] {
         for verticalSign in [-1.0, 1] {
             var recognizer = ScrollGestureRecognizer()
             #expect(
                 recognizer.sample(
-                    pull: verticalSign * 100 * sin(angle), swipe: horizontalSign * 100 * cos(angle),
+                    pull: verticalSign * 100 * cos(angle), sideways: horizontalSign * 100 * sin(angle),
                     phase: .began, expanded: verticalSign < 0) == nil)
         }
     }
 }
 
-@Test func horizontalStrokeWaitsForFiftyPointsOfHorizontalTravel() {
+@Test(arguments: [-1.0, 1], [false, true])
+func purelyHorizontalStrokeNeverFires(_ direction: Double, _ precise: Bool) {
     var recognizer = ScrollGestureRecognizer()
-    #expect(recognizer.sample(swipe: 49, phase: .began) == nil)
-    #expect(recognizer.sample(swipe: 1) == .previous)
-    #expect(recognizer.sample(swipe: -100) == nil)
-    #expect(recognizer.sample(swipe: -50, phase: .began) == .next)
-    // Radius exceeds 30 before horizontal displacement reaches its own threshold.
-    #expect(recognizer.sample(pull: 20, swipe: 49, phase: .began) == nil)
-    #expect(recognizer.sample(swipe: 1) == .previous)
+    #expect(recognizer.sample(sideways: direction * 100, phase: .began, precise: precise) == nil)
+    #expect(recognizer.sample(sideways: direction * 100, precise: precise) == nil)
 }
 
 @Test func strokeDirectionRemainsChangeableBeforeConsumption() {
     var recognizer = ScrollGestureRecognizer()
-    #expect(recognizer.sample(swipe: 5, phase: .began) == nil)
-    #expect(recognizer.sample(pull: 30, swipe: -5) == .open)
-    #expect(recognizer.sample(pull: 5, phase: .began) == nil)
-    #expect(recognizer.sample(pull: -5, swipe: 50) == .previous)
-    #expect(recognizer.sample(pull: 30, swipe: 30, phase: .began) == nil)
-    #expect(recognizer.sample(pull: -30, swipe: 20) == .previous)
+    #expect(recognizer.sample(sideways: 5, phase: .began) == nil)
+    #expect(recognizer.sample(pull: 30, sideways: -5) == .open)
+    #expect(recognizer.sample(pull: 30, sideways: 30, phase: .began) == nil)
+    #expect(recognizer.sample(sideways: -30) == .open)
 }
 
 @Test(arguments: [ScrollPhase.began, .none])
@@ -246,8 +227,8 @@ func verticalPermissionIsSampledForTheWholeStroke(_ firstPhase: ScrollPhase) {
         recognizer.sample(pull: 20, time: 0.1, phase: continuation, verticalAllowed: true) == nil)
     #expect(
         recognizer.sample(
-            pull: -30, swipe: 50, time: 0.2, phase: continuation, verticalAllowed: false)
-            == .previous)
+            pull: -30, sideways: 50, time: 0.2, phase: continuation, verticalAllowed: false)
+            == nil)
     #expect(recognizer.sample(pull: 10, time: 1, phase: firstPhase, verticalAllowed: true) == nil)
     #expect(
         recognizer.sample(pull: 20, time: 1.1, phase: continuation, verticalAllowed: false) == .open
@@ -275,16 +256,16 @@ func verticalPermissionIsSampledForTheWholeStroke(_ firstPhase: ScrollPhase) {
     #expect(recognizer.sample(pull: 30, time: 0.9, phase: .none) == nil)
 }
 
-@Test func impreciseInputCannotSwitchTabsButCanOpenVertically() {
+@Test func impreciseInputCanOpenVertically() {
     var recognizer = ScrollGestureRecognizer()
-    #expect(recognizer.sample(swipe: 50, phase: .began, precise: false) == nil)
-    #expect(recognizer.sample(pull: 30, swipe: -50, precise: false) == .open)
+    #expect(recognizer.sample(sideways: 50, phase: .began, precise: false) == nil)
+    #expect(recognizer.sample(pull: 30, sideways: -50, precise: false) == .open)
 }
 
 @Test func consumptionPreventsSecondActionUntilTheNextStroke() {
     var recognizer = ScrollGestureRecognizer()
     #expect(recognizer.sample(pull: 30, phase: .began) == .open)
-    #expect(recognizer.sample(swipe: 100, expanded: true) == nil)
+    #expect(recognizer.sample(sideways: 100, expanded: true) == nil)
     #expect(recognizer.sample(pull: -60, expanded: true) == nil)
     #expect(recognizer.sample(pull: -30, phase: .began, expanded: true) == .close)
 }
@@ -293,9 +274,9 @@ func verticalPermissionIsSampledForTheWholeStroke(_ firstPhase: ScrollPhase) {
 func strokeEndingPhasesDiscardMovementWithoutFiring(_ phase: ScrollPhase) {
     var recognizer = ScrollGestureRecognizer()
     #expect(recognizer.sample(pull: 10, phase: .began) == nil)
-    #expect(recognizer.sample(swipe: 100, phase: phase) == nil)
-    #expect(recognizer.sample(swipe: 50) == nil)
-    #expect(recognizer.sample(swipe: 50, phase: .began) == .previous)
+    #expect(recognizer.sample(pull: 100, phase: phase) == nil)
+    #expect(recognizer.sample(pull: 30) == nil)
+    #expect(recognizer.sample(pull: 30, phase: .began) == .open)
 }
 
 @Test(arguments: [Double.nan, .infinity, -.infinity])
@@ -304,7 +285,7 @@ func invalidDeltasAreDroppedWithoutLosingStrokeState(_ invalid: Double) {
         var recognizer = ScrollGestureRecognizer()
         #expect(recognizer.sample(pull: 10, phase: .began) == nil)
         #expect(
-            recognizer.sample(pull: field == 0 ? invalid : 0, swipe: field == 1 ? invalid : 0)
+            recognizer.sample(pull: field == 0 ? invalid : 0, sideways: field == 1 ? invalid : 0)
                 == nil)
         #expect(recognizer.sample(pull: 20) == .open)
         #expect(recognizer.sample(pull: invalid) == nil)
@@ -315,9 +296,9 @@ func invalidDeltasAreDroppedWithoutLosingStrokeState(_ invalid: Double) {
 @Test func overflowingVectorUpdatesAreDroppedWithoutResetting() {
     var recognizer = ScrollGestureRecognizer()
     let large = Double.greatestFiniteMagnitude
-    #expect(recognizer.sample(pull: large, swipe: large, phase: .began) == nil)
-    #expect(recognizer.sample(pull: large, swipe: large) == nil)
-    #expect(recognizer.sample(pull: -large, swipe: -large) == nil)
+    #expect(recognizer.sample(pull: large, sideways: large, phase: .began) == nil)
+    #expect(recognizer.sample(pull: large, sideways: large) == nil)
+    #expect(recognizer.sample(pull: -large, sideways: -large) == nil)
     #expect(recognizer.sample(pull: 30) == .open)
 }
 

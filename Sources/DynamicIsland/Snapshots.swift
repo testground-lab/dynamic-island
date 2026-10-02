@@ -12,24 +12,26 @@ enum Snapshots {
         let model = IslandModel.demo()
         let notch = CGSize(width: 220, height: 38)
 
-        let states: [(String, IslandPresentation, IslandTab, UsageRange)] = [
-            ("idle", .collapsed, .limits, .today),
-            ("idle-hover", .emphasized, .limits, .today),
-            ("limits", .expanded(byHover: false), .limits, .today),
-            ("usage-today", .expanded(byHover: false), .usage, .today),
-            ("usage-7d", .expanded(byHover: false), .usage, .week),
-            ("usage-30d", .expanded(byHover: false), .usage, .month),
+        // Page cap as on a 1169 pt tall built-in display (60% of its visible height).
+        let maxContent: CGFloat = 680
+        let states: [(String, IslandPresentation, CGFloat, UsageRange)] = [
+            ("idle", .collapsed, 0, .today),
+            ("idle-hover", .emphasized, 0, .today),
+            ("open-top", .expanded(byHover: false), 0, .today),
+            ("open-scrolled-usage", .expanded(byHover: false), 236, .week),
         ]
-        for (name, presentation, tab, range) in states {
+        for (name, presentation, offset, range) in states {
             let ui = IslandUIState()
             ui.notchSize = notch
             ui.presentation = presentation
-            ui.tab = tab
             ui.usageRange = range
             ui.isSnapshot = true
+            ui.maxContentHeight = offset > 0 ? 420 : maxContent
+            ui.panelHeight = notch.height + ui.maxContentHeight + 80
+            ui.snapshotOffset = offset
             let expanded = ui.isExpanded
             let view = IslandView(model: model, ui: ui, onTap: {}, openSettings: {}, quit: {})
-                .frame(width: IslandMetrics.panelSize.width, height: expanded ? IslandMetrics.panelSize.height : 60)
+                .frame(width: IslandMetrics.panelSize.width, height: expanded ? ui.panelHeight : 60)
                 .background(Color(white: 0.82)) // stand-in for a light desktop
             try write(view, to: directory.appendingPathComponent(name + ".png"))
         }
@@ -42,8 +44,8 @@ enum Snapshots {
                           to: directory.appendingPathComponent(name + ".png"))
             }
         }
-        try write(PopoverDashboard(model: model, scrollable: false, openSettings: {}, tab: .usage, range: .week),
-                  to: directory.appendingPathComponent("menubar-popover-usage-7d.png"))
+        try write(PopoverDashboard(model: model, snapshotOffset: 0, openSettings: {}, range: .today),
+                  to: directory.appendingPathComponent("menubar-popover.png"))
     }
 
     private static func write(_ view: some View, to url: URL) throws {

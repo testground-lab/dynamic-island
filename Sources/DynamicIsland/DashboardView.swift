@@ -1,44 +1,35 @@
 import IslandCore
 import SwiftUI
 
-enum IslandTab: String, CaseIterable {
-    case limits = "Limits", usage = "Usage"
-
-    var next: IslandTab {
-        let all = Self.allCases
-        return all[(all.firstIndex(of: self)! + 1) % all.count]
-    }
-
-    var previous: IslandTab {
-        let all = Self.allCases
-        return all[(all.firstIndex(of: self)! + all.count - 1) % all.count]
-    }
-}
-
 enum DashboardMetrics {
     /// Content column of the open island (480 wide minus shoulders and insets).
     static let contentWidth: CGFloat = 424
     static let spacing: CGFloat = 6
     static let cardRadius: CGFloat = 14
-    /// Pages scroll past this.
-    static let contentBudget: CGFloat = 270
+    /// Fallback scroll cap when the caller doesn't know the screen.
+    static let defaultMaxContentHeight: CGFloat = 420
 }
 
-/// The open island's content: a header row beside the camera, then one page.
-/// Shared by the notch island and the menu-bar popover.
+/// The open island's content: a header row beside the camera, then one
+/// scrolling page: Limits first, Usage below. Shared by the notch island and
+/// the menu-bar popover.
 struct DashboardView: View {
     let model: IslandModel
-    @Binding var tab: IslandTab
     @Binding var range: UsageRange
     /// Header height; in the island this is the camera's height so the header
     /// sits in the menu-bar band beside it.
     var headerHeight: CGFloat = 28
     /// Width of the camera between the header's halves (0: no camera).
     var cameraGap: CGFloat = 0
-    var maxContentHeight: CGFloat = DashboardMetrics.contentBudget
-    /// Off for offscreen snapshots: ImageRenderer can't draw scroll views.
-    var scrollable = true
+    /// The page scrolls beyond this height.
+    var maxContentHeight: CGFloat = DashboardMetrics.defaultMaxContentHeight
+    /// Offscreen snapshots can't render scroll views; they get the page clipped
+    /// at `maxContentHeight`, shifted up by this offset instead.
+    var snapshotOffset: CGFloat?
     var openSettings: () -> Void
+
+    @State private var contentHeight: CGFloat = 0
+    @State private var moreBelow = false
 
     var body: some View {
         VStack(spacing: DashboardMetrics.spacing) {
@@ -54,14 +45,9 @@ struct DashboardView: View {
     private var header: some View {
         let side = (DashboardMetrics.contentWidth - cameraGap) / 2
         return HStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Text(tab.rawValue)
-                    .font(.system(size: 13, weight: .semibold))
-                    .contentTransition(.opacity)
-                PageDots(tab: $tab)
-                Spacer(minLength: 0)
-            }
-            .frame(width: side, alignment: .leading)
+            Text("AI usage")
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: side, alignment: .leading)
             Color.clear.frame(width: cameraGap)
             HStack(spacing: 4) {
                 Spacer(minLength: 0)
@@ -80,14 +66,25 @@ struct DashboardView: View {
     @ViewBuilder private var page: some View {
         TimelineView(.periodic(from: .now, by: 15)) { context in
             let content = pageContent(now: context.date)
-            if scrollable {
-                ViewThatFits(in: .vertical) {
-                    content
-                    ScrollView(showsIndicators: false) { content }
-                }
-                .frame(maxHeight: maxContentHeight)
+            if let snapshotOffset {
+                // No fade here: the snapshot can't tell whether more is below.
+                SnapshotClip(offset: snapshotOffset, maxHeight: maxContentHeight) { content }
+                    .clipped()
             } else {
-                content
+                ScrollView(.vertical) {
+                    content
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+                }
+                .scrollIndicators(.never)
+                .scrollBounceBehavior(.basedOnSize)
+                // Hug the content; scroll only past the cap.
+                .frame(height: min(max(contentHeight, 1), maxContentHeight))
+                .onScrollGeometryChange(for: Bool.self) { geo in
+                    geo.contentOffset.y + geo.containerSize.height < geo.contentSize.height - 2
+                } action: { _, more in
+                    withAnimation(.easeOut(duration: 0.15)) { moreBelow = more }
+                }
+                .mask(BottomFade(active: moreBelow))
             }
         }
     }
@@ -102,40 +99,68 @@ struct DashboardView: View {
                     ProblemBanner(title: problem.title, transient: model.connection.isTransient,
                                   action: model.connection.isTransient ? { model.refreshNow() } : openSettings)
                 }
-                switch tab {
-                case .limits: LimitsPage(accounts: model.accounts, now: now)
-                case .usage: UsagePage(reports: model.usageReports, available: model.usageAvailable, range: $range)
+                let active = model.accounts.filter { $0.health != .disabled }.count
+                SectionHeader(title: "Limits") {
+                    Text(active == 1 ? "1 account" : "\(active) accounts")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(Theme.tertiary)
                 }
+                LimitsPage(accounts: model.accounts, now: now)
+                SectionHeader(title: "Usage") { RangePicker(range: $range) }
+                    .padding(.top, 4)
+                UsagePage(reports: model.usageReports, available: model.usageAvailable, range: $range)
             }
-            .id(tab)
-            .transition(.opacity)
         }
     }
 }
 
 // MARK: - Header pieces
 
-private struct PageDots: View {
-    @Binding var tab: IslandTab
+/// Snapshot stand-in for a scrolled ScrollView: shows the child from `offset`
+/// down, at most `maxHeight` tall.
+private struct SnapshotClip: Layout {
+    var offset: CGFloat
+    var maxHeight: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let child = subviews.first?.sizeThatFits(.init(width: proposal.width, height: nil)) else { return .zero }
+        return CGSize(width: child.width, height: min(max(child.height - offset, 0), maxHeight))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: CGPoint(x: bounds.minX, y: bounds.minY - offset), anchor: .topLeading,
+                              proposal: .init(width: bounds.width, height: nil))
+    }
+}
+
+/// Fades the last few points of the page when more content is below.
+private struct BottomFade: View {
+    var active: Bool
 
     var body: some View {
-        HStack(spacing: 3) {
-            ForEach(IslandTab.allCases, id: \.self) { item in
-                Button {
-                    withAnimation(Theme.emphasis) { tab = item }
-                } label: {
-                    Capsule()
-                        .fill(.white.opacity(item == tab ? 0.9 : 0.25))
-                        .frame(width: item == tab ? 10 : 4, height: 4)
-                        .padding(.vertical, 6)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(item.rawValue)
-                .accessibilityAddTraits(item == tab ? .isSelected : [])
-            }
+        VStack(spacing: 0) {
+            Color.black
+            LinearGradient(colors: [.black, .black.opacity(active ? 0 : 1)], startPoint: .top, endPoint: .bottom)
+                .frame(height: 22)
         }
-        .help("Swipe sideways with two fingers to switch pages")
+    }
+}
+
+private struct SectionHeader<Trailing: View>: View {
+    var title: String
+    @ViewBuilder var trailing: Trailing
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(title.uppercased())
+                .font(.system(size: 9.5, weight: .bold))
+                .tracking(0.6)
+                .foregroundStyle(Theme.tertiary)
+            Spacer(minLength: 4)
+            trailing
+        }
+        .frame(height: 18)
+        .padding(.horizontal, 2)
     }
 }
 
@@ -278,14 +303,6 @@ private struct UsagePage: View {
         VStack(spacing: DashboardMetrics.spacing) {
             CardChrome {
                 VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "chart.bar.fill").font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Theme.secondary).frame(width: 17)
-                        Text("All accounts").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.white.opacity(0.9))
-                        Spacer(minLength: 4)
-                        RangePicker(range: $range)
-                    }
-                    .frame(height: 17)
                     if !available {
                         note("This proxy doesn't expose its usage queue, so usage can't be recorded.")
                     } else if let report {

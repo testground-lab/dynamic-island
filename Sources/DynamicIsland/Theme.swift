@@ -1,13 +1,19 @@
+import AppKit
 import IslandCore
 import SwiftUI
 
 enum Theme {
-    static let spring = Animation.spring(response: 0.42, dampingFraction: 0.8)
+    /// With Reduce Motion on, every animation becomes a short cross-fade-like ease.
+    private static func motion(_ animation: Animation) -> Animation {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? .easeInOut(duration: 0.15) : animation
+    }
+
+    static var spring: Animation { motion(.spring(response: 0.42, dampingFraction: 0.8)) }
     /// Opening overshoots a little; closing settles without bounce and faster.
-    static let open = Animation.spring(duration: 0.42, bounce: 0.22)
-    static let close = Animation.spring(duration: 0.28, bounce: 0)
+    static var open: Animation { motion(.spring(duration: 0.42, bounce: 0.22)) }
+    static var close: Animation { motion(.spring(duration: 0.28, bounce: 0)) }
     /// The hover "pulse" on the closed island.
-    static let emphasis = Animation.spring(duration: 0.3, bounce: 0.2)
+    static var emphasis: Animation { motion(.spring(duration: 0.3, bounce: 0.2)) }
     static let card = Color.white.opacity(0.06)
     static let cardStroke = Color.white.opacity(0.08)
     static let secondary = Color.white.opacity(0.55)

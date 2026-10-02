@@ -88,10 +88,6 @@ public struct IslandInteraction: Equatable, Sendable {
         }
     }
 
-    public mutating func toggle() -> [IslandEffect] {
-        isExpanded ? close() : clicked()
-    }
-
     public mutating func dismiss() -> [IslandEffect] {
         isExpanded ? close() : []
     }
@@ -142,7 +138,6 @@ public enum ScrollPhase: Equatable, Sendable {
 /// A stroke can change direction until it produces an action; afterward it is consumed.
 public struct ScrollGestureRecognizer: Equatable, Sendable {
     private struct Stroke: Equatable, Sendable {
-        let startedAt: TimeInterval
         let permitsVertical: Bool
         var lastEventAt: TimeInterval
         var dx = 0.0
@@ -150,7 +145,6 @@ public struct ScrollGestureRecognizer: Equatable, Sendable {
         var consumed = false
 
         init(time: TimeInterval, permitsVertical: Bool) {
-            startedAt = time
             lastEventAt = time
             self.permitsVertical = permitsVertical
         }

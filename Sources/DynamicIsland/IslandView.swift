@@ -42,7 +42,6 @@ struct IslandView: View {
     var onTap: () -> Void
     var openSettings: () -> Void
     var quit: () -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let expanded = ui.isExpanded
@@ -75,8 +74,8 @@ struct IslandView: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .animation(reduceMotion ? .easeInOut(duration: 0.15) : expanded ? Theme.open : Theme.close, value: expanded)
-        .animation(reduceMotion ? nil : Theme.emphasis, value: ui.presentation == .emphasized)
+        .animation(expanded ? Theme.open : Theme.close, value: expanded)
+        .animation(Theme.emphasis, value: ui.presentation == .emphasized)
         .environment(\.colorScheme, .dark)
     }
 

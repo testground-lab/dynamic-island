@@ -78,13 +78,12 @@ func clickingClosedIslandPinsAndTakesFocus(_ emphasized: Bool) {
     #expect(state.isExpanded)
 }
 
-@Test(arguments: [0, 1, 2])
+@Test(arguments: [0, 1])
 func closingInsideSuppressesHoverUntilPointerLeaves(_ closingMethod: Int) {
     var state = hoverOpened()
     let effects: [IslandEffect]
     switch closingMethod {
-    case 0: effects = state.toggle()
-    case 1: effects = state.dismiss()
+    case 0: effects = state.dismiss()
     default: effects = state.gesture(.close)
     }
     #expect(effects == [.cancel(.hoverOpen), .cancel(.exitClose)])
@@ -99,10 +98,10 @@ func closingInsideSuppressesHoverUntilPointerLeaves(_ closingMethod: Int) {
     #expect(state.timerFired(.hoverOpen) == [.haptic])
 }
 
-@Test func toggleCanOpenAndCloseOutsideWithoutSuppression() {
+@Test func clickThenDismissOutsideWithoutSuppression() {
     var state = IslandInteraction(openOnHover: true)
-    #expect(state.toggle() == [.haptic, .takeFocus, .cancel(.hoverOpen)])
-    #expect(state.toggle() == [.cancel(.hoverOpen), .cancel(.exitClose)])
+    #expect(state.clicked() == [.haptic, .takeFocus, .cancel(.hoverOpen)])
+    #expect(state.dismiss() == [.cancel(.hoverOpen), .cancel(.exitClose)])
     #expect(state.pointerEntered() == [.schedule(.hoverOpen, after: 0.25)])
     #expect(state.presentation == .emphasized)
 }

@@ -4,7 +4,8 @@ import Foundation
 // raw API shapes live in APIModels.swift and are mapped in by `AccountMapper`.
 
 public enum Provider: Hashable, Sendable {
-    case claude, codex, gemini, other(String)
+    case claude, codex, gemini
+    case other(String)
 
     public init(raw: String) {
         switch raw.lowercased().trimmingCharacters(in: .whitespaces) {
@@ -33,15 +34,30 @@ public struct QuotaWindow: Identifiable, Hashable, Sendable {
     /// Used share of the window, 0...1. nil when unknown.
     public var usedFraction: Double?
     public var resetsAt: Date?
+    /// Full duration of this quota window, independent of its utilization.
+    public var periodSeconds: TimeInterval?
 
-    public init(id: String, label: String, usedFraction: Double?, resetsAt: Date?) {
+    public init(
+        id: String, label: String, usedFraction: Double?, resetsAt: Date?,
+        periodSeconds: TimeInterval? = nil
+    ) {
         self.id = id
         self.label = label
         self.usedFraction = usedFraction.map { min(max($0, 0), 1) }
         self.resetsAt = resetsAt
+        self.periodSeconds = periodSeconds
     }
 
     public var remainingFraction: Double? { usedFraction.map { 1 - $0 } }
+
+    public func elapsedFraction(now: Date) -> Double? {
+        guard let resetsAt, let periodSeconds, periodSeconds.isFinite, periodSeconds > 0 else {
+            return nil
+        }
+        let remaining = resetsAt.timeIntervalSince(now)
+        guard remaining.isFinite else { return nil }
+        return min(max(1 - remaining / periodSeconds, 0), 1)
+    }
 }
 
 public enum QuotaSource: Hashable, Sendable {
@@ -93,7 +109,9 @@ public struct Account: Identifiable, Hashable, Sendable {
 
     /// The window closest to exhaustion: the one that actually limits the account.
     public var bindingWindow: QuotaWindow? {
-        windows.filter { $0.usedFraction != nil }.max { ($0.usedFraction ?? 0) < ($1.usedFraction ?? 0) }
+        windows.filter { $0.usedFraction != nil }.max {
+            ($0.usedFraction ?? 0) < ($1.usedFraction ?? 0)
+        }
     }
 }
 
@@ -106,7 +124,10 @@ public struct ModelUsage: Identifiable, Hashable, Sendable {
     public var outputTokens: Int
     public var totalTokens: Int
 
-    public init(model: String, requests: Int, failed: Int, inputTokens: Int, outputTokens: Int, totalTokens: Int) {
+    public init(
+        model: String, requests: Int, failed: Int, inputTokens: Int, outputTokens: Int,
+        totalTokens: Int
+    ) {
         self.model = model
         self.requests = requests
         self.failed = failed

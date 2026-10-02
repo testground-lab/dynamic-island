@@ -37,6 +37,11 @@ private func claudePeriod(_ key: String) -> Double {
     default: return .greatestFiniteMagnitude
     }
 }
+private func quotaPeriod(_ seconds: Double?) -> TimeInterval? {
+    guard let seconds, seconds.isFinite, seconds > 0 else { return nil }
+    return seconds
+}
+
 private func sortedWindows(_ pairs: [(QuotaWindow, Double)]) -> [QuotaWindow] {
     pairs.sorted { $0.1 == $1.1 ? $0.0.id < $1.0.id : $0.1 < $1.1 }.map(\.0)
 }
@@ -72,7 +77,7 @@ public enum HeaderQuotaParser {
                     (
                         QuotaWindow(
                             id: "claude." + id, label: claudeLabel(name), usedFraction: used,
-                            resetsAt: reset), claudePeriod(name)
+                            resetsAt: reset, periodSeconds: claudePeriod(name)), claudePeriod(name)
                     ))
             }
         case .codex:
@@ -92,7 +97,8 @@ public enum HeaderQuotaParser {
                     (
                         QuotaWindow(
                             id: "codex." + kind, label: minutesLabel(minutes), usedFraction: used,
-                            resetsAt: reset), minutes.map { $0 * 60 } ?? .greatestFiniteMagnitude
+                            resetsAt: reset, periodSeconds: quotaPeriod(minutes.map { $0 * 60 })),
+                        minutes.map { $0 * 60 } ?? .greatestFiniteMagnitude
                     ))
             }
         default: break
@@ -163,7 +169,7 @@ public enum LiveQuotaFetcher {
                         QuotaWindow(
                             id: "claude." + id, label: label,
                             usedFraction: w.number("utilization").map { $0 / 100 },
-                            resetsAt: w.date("resets_at")), period
+                            resetsAt: w.date("resets_at"), periodSeconds: period), period
                     ))
             }
         case .codex:
@@ -193,7 +199,8 @@ public enum LiveQuotaFetcher {
                     (
                         QuotaWindow(
                             id: "codex." + id, label: minutesLabel(seconds.map { $0 / 60 }),
-                            usedFraction: percent.map { $0 / 100 }, resetsAt: reset),
+                            usedFraction: percent.map { $0 / 100 }, resetsAt: reset,
+                            periodSeconds: quotaPeriod(seconds)),
                         seconds ?? .greatestFiniteMagnitude
                     ))
             }

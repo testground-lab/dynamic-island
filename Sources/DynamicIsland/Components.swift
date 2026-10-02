@@ -18,6 +18,7 @@ struct QuotaRing: View {
                 .rotationEffect(.degrees(-90))
         }
         .animation(Theme.spring, value: remaining)
+        .accessibilityHidden(true)
     }
 }
 
@@ -53,6 +54,11 @@ struct QuotaBar: View {
             }
         }
         .animation(Theme.spring, value: window.usedFraction)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(window.label) quota")
+        .accessibilityValue([Format.percent(window.remainingFraction) + " left",
+                             Format.reset(window.resetsAt).map { "resets \($0)" }]
+            .compactMap { $0 }.joined(separator: ", "))
     }
 }
 
@@ -107,6 +113,18 @@ struct ConnectionDot: View {
             .fill(color)
             .frame(width: 6, height: 6)
             .shadow(color: color.opacity(0.8), radius: 3)
+            .accessibilityLabel(label)
+    }
+
+    private var label: String {
+        switch state {
+        case .connected: "Connected"
+        case .connecting: "Connecting"
+        case .needsKey: "Management key needed"
+        case .keyRejected: "Key rejected"
+        case .proxyDown: "Proxy down"
+        case .failed: "Connection failed"
+        }
     }
 
     private var color: Color {
@@ -120,6 +138,14 @@ struct ConnectionDot: View {
 }
 
 extension ConnectionState {
+    /// Proxy unreachable or erroring, as opposed to a key problem the user must fix in Settings.
+    var isTransient: Bool {
+        switch self {
+        case .proxyDown, .failed: true
+        default: false
+        }
+    }
+
     /// nil when everything is fine.
     var problem: (title: String, detail: String)? {
         switch self {

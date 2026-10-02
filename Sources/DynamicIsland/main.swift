@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settings: SettingsWindowController!
     private var notch: NotchController?
     private var menuBar: MenuBarController?
+    private var screenObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let index = CommandLine.arguments.firstIndex(of: "--snapshot"), index + 1 < CommandLine.arguments.count {
@@ -25,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         NSApp.setActivationPolicy(.accessory) // no Dock icon, also when run unbundled
+        NSApp.mainMenu = Self.makeMainMenu()
 
         if arguments.contains("--demo") {
             model = IslandModel.demo()
@@ -39,7 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings = SettingsWindowController(model: model)
 
         layoutForScreens()
-        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
+        screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.layoutForScreens() }
         }
@@ -69,6 +71,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 menuBar = MenuBarController(model: model, openSettings: openSettings, quit: quit)
             }
         }
+    }
+
+    /// Accessory apps show no menu bar, but the key equivalents of the main menu
+    /// still work — without an Edit menu, Cmd-V can't paste the key into Settings.
+    private static func makeMainMenu() -> NSMenu {
+        let main = NSMenu()
+        let appItem = NSMenuItem()
+        appItem.submenu = NSMenu()
+        appItem.submenu?.addItem(withTitle: "Quit Dynamic Island", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        main.addItem(appItem)
+
+        let editItem = NSMenuItem()
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        editItem.submenu = edit
+        main.addItem(editItem)
+        return main
     }
 
     func applicationWillTerminate(_ notification: Notification) {

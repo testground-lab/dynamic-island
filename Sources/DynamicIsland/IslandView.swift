@@ -9,12 +9,13 @@ final class IslandUIState {
     var notchSize = CGSize(width: 190, height: 32)
     /// Island frame in window coordinates (top-left origin), used for hit-testing.
     var islandFrame: CGRect = .zero
+    var panelHeight: CGFloat = IslandMetrics.panelSize.height
     /// Offscreen rendering (no scroll views, see `Snapshots`).
     var isSnapshot = false
 }
 
 enum IslandMetrics {
-    static let wing: CGFloat = 64
+    static let wing: CGFloat = 56
     static let expandedWidth: CGFloat = 580
     static let collapsedFlare: CGFloat = 7
     static let expandedFlare: CGFloat = 14
@@ -42,7 +43,7 @@ struct IslandView: View {
                 if expanded {
                     DashboardView(model: model,
                                   headerHeight: ui.notchSize.height,
-                                  maxContentHeight: IslandMetrics.panelSize.height - ui.notchSize.height - 60,
+                                  maxContentHeight: ui.panelHeight - ui.notchSize.height - 60,
                                   scrollable: !ui.isSnapshot,
                                   openSettings: openSettings)
                         .frame(width: IslandMetrics.expandedWidth - 40)
@@ -93,13 +94,26 @@ struct CollapsedSummary: View {
         .padding(.horizontal, 2)
         .frame(height: notchSize.height)
         .foregroundStyle(.white)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("CLIProxy")
+        .accessibilityValue(accessibilitySummary)
+    }
+
+    private var accessibilitySummary: String {
+        if let problem = model.connection.problem { return problem.title }
+        var parts: [String] = []
+        if let account = model.featuredAccount, let window = account.bindingWindow {
+            parts.append("\(account.provider.displayName) \(account.label), \(window.label) \(Format.percent(window.remainingFraction)) left")
+        }
+        parts.append("\(model.requestsLastHour) requests in the last hour")
+        return parts.joined(separator: ", ")
     }
 
     @ViewBuilder private var leftWing: some View {
         if model.connection.problem != nil {
-            Image(systemName: model.connection == .needsKey ? "key.fill" : "exclamationmark.triangle.fill")
+            Image(systemName: model.connection.isTransient ? "bolt.horizontal.circle.fill" : "key.fill")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Theme.warning)
+                .foregroundStyle(model.connection.isTransient ? Theme.danger : Theme.warning)
                 .padding(.leading, 10)
         } else if let account = model.featuredAccount {
             HStack(spacing: 5) {

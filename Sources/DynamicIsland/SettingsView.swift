@@ -9,6 +9,7 @@ struct SettingsView: View {
     @State private var baseURLDraft = ""
     @State private var message: (text: String, isError: Bool)?
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
+    @State private var revertingLoginToggle = false
 
     var body: some View {
         Form {
@@ -24,7 +25,6 @@ struct SettingsView: View {
                         Button("Remove", role: .destructive, action: removeKey)
                     }
                     Button("Save Key", action: saveKey)
-                        .keyboardShortcut(.defaultAction)
                         .disabled(keyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             } header: {
@@ -61,11 +61,24 @@ struct SettingsView: View {
                 Toggle("Launch at login", isOn: $launchAtLogin)
                     .disabled(!LaunchAtLogin.isAvailable)
                     .onChange(of: launchAtLogin) { _, enabled in
+                        if revertingLoginToggle {
+                            revertingLoginToggle = false
+                            return
+                        }
                         if let error = LaunchAtLogin.set(enabled) {
                             message = (error, true)
+                            revertingLoginToggle = true
                             launchAtLogin = LaunchAtLogin.isEnabled
                         }
                     }
+                if LaunchAtLogin.needsApproval {
+                    HStack {
+                        Text("Allow Dynamic Island in System Settings › Login Items to finish.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Open") { SMAppService.openSystemSettingsLoginItems() }
+                    }
+                }
                 if !LaunchAtLogin.isAvailable {
                     Text("Available when running the bundled DynamicIsland.app (scripts/bundle.sh).")
                         .font(.caption)
@@ -83,6 +96,7 @@ struct SettingsView: View {
         .frame(width: 480)
         .fixedSize(horizontal: false, vertical: true)
         .onAppear { baseURLDraft = model.baseURLString }
+        .onDisappear { keyDraft = "" }
     }
 
     private var statusText: String {
@@ -118,6 +132,11 @@ struct SettingsView: View {
     }
 
     private func applyBaseURL() {
+        guard let url = BaseURLValidator.validate(baseURLDraft) else {
+            message = ("Invalid address. Use http://127.0.0.1:<port> or an https URL.", true)
+            return
+        }
+        if !Self.isLoopback(url) && !confirmRemote(host: url.host() ?? url.absoluteString) { return }
         if model.applyBaseURL(baseURLDraft) {
             baseURLDraft = model.baseURLString
             message = ("Proxy address updated.", false)
@@ -127,10 +146,28 @@ struct SettingsView: View {
     }
 }
 
+extension SettingsView {
+    static func isLoopback(_ url: URL) -> Bool {
+        ["127.0.0.1", "localhost", "::1"].contains(url.host()?.lowercased() ?? "")
+    }
+
+    /// The management key goes to whatever host is configured; make sending it
+    /// off this Mac a deliberate choice.
+    private func confirmRemote(host: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Send the management key to \(host)?"
+        alert.informativeText = "Every poll includes your management key. Only continue if you run CLIProxyAPI on that host."
+        alert.addButton(withTitle: "Use \(host)")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+}
+
 enum LaunchAtLogin {
     /// SMAppService only works from a real .app bundle.
     static var isAvailable: Bool { Bundle.main.bundleURL.pathExtension == "app" }
     static var isEnabled: Bool { isAvailable && SMAppService.mainApp.status == .enabled }
+    static var needsApproval: Bool { isAvailable && SMAppService.mainApp.status == .requiresApproval }
 
     /// Returns an error message on failure.
     @MainActor static func set(_ enabled: Bool) -> String? {
@@ -144,12 +181,19 @@ enum LaunchAtLogin {
     }
 }
 
+/// Accessory apps can't reliably take focus (activation is cooperative since
+/// macOS 14), so the app becomes a regular app while Settings is open and goes
+/// back to having no Dock icon when it closes.
 @MainActor
-final class SettingsWindowController {
+final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private let model: IslandModel
 
     init(model: IslandModel) { self.model = model }
+
+    func windowWillClose(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+    }
 
     func show() {
         if window == nil {
@@ -159,10 +203,13 @@ final class SettingsWindowController {
             window.title = "Dynamic Island Settings"
             window.styleMask = [.titled, .closable]
             window.isReleasedWhenClosed = false
+            window.delegate = self
             window.center()
             self.window = window
         }
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate()
         window?.makeKeyAndOrderFront(nil)
+        window?.orderFrontRegardless()
     }
 }

@@ -48,7 +48,8 @@ struct DashboardView: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: 14) {
             if let problem = model.connection.problem {
-                ProblemCard(title: problem.title, detail: problem.detail, openSettings: openSettings)
+                ProblemCard(title: problem.title, detail: problem.detail, transient: model.connection.isTransient,
+                            retry: { model.refreshNow() }, openSettings: openSettings)
             }
             if !model.accounts.isEmpty {
                 let active = model.accounts.filter { $0.health != .disabled }
@@ -82,6 +83,7 @@ private struct IconButton: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help(help)
+        .accessibilityLabel(help)
     }
 }
 
@@ -106,12 +108,17 @@ private struct SectionTitle: View {
 private struct ProblemCard: View {
     var title: String
     var detail: String
+    /// Proxy trouble (offer Retry) vs. a key problem (offer Settings).
+    var transient: Bool
+    var retry: () -> Void
     var openSettings: () -> Void
+
+    private var tint: Color { transient ? Theme.danger : Theme.warning }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Theme.warning)
+            Image(systemName: transient ? "bolt.horizontal.circle.fill" : "key.fill")
+                .foregroundStyle(tint)
                 .font(.system(size: 14))
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.system(size: 12, weight: .semibold))
@@ -121,7 +128,7 @@ private struct ProblemCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            Button("Settings", action: openSettings)
+            Button(transient ? "Retry" : "Settings", action: transient ? retry : openSettings)
                 .buttonStyle(.plain)
                 .font(.system(size: 11, weight: .semibold))
                 .padding(.horizontal, 10)
@@ -129,8 +136,8 @@ private struct ProblemCard: View {
                 .background(Color.white.opacity(0.12), in: Capsule())
         }
         .padding(12)
-        .background(Theme.warning.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.warning.opacity(0.25)))
+        .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(tint.opacity(0.25)))
     }
 }
 
@@ -283,18 +290,23 @@ private struct RangeToggle: View {
     var body: some View {
         HStack(spacing: 2) {
             ForEach(UsageSection.Range.allCases, id: \.self) { range in
-                Text(range.rawValue)
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(selection == range ? .black : Theme.secondary)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 3)
-                    .background {
-                        if selection == range {
-                            Capsule().fill(.white).matchedGeometryEffect(id: "pill", in: ns)
+                Button {
+                    withAnimation(Theme.spring) { selection = range }
+                } label: {
+                    Text(range.rawValue)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(selection == range ? .black : Theme.secondary)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 3)
+                        .background {
+                            if selection == range {
+                                Capsule().fill(.white).matchedGeometryEffect(id: "pill", in: ns)
+                            }
                         }
-                    }
-                    .contentShape(Capsule())
-                    .onTapGesture { withAnimation(Theme.spring) { selection = range } }
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selection == range ? .isSelected : [])
             }
         }
         .padding(2)

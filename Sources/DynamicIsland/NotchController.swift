@@ -7,8 +7,11 @@ extension NSScreen {
     var notchFrame: CGRect? {
         guard safeAreaInsets.top > 0,
               let left = auxiliaryTopLeftArea, let right = auxiliaryTopRightArea else { return nil }
+        // Width-only math: correct whether the auxiliary areas are reported in
+        // global or screen-local coordinates.
         let height = safeAreaInsets.top
-        return CGRect(x: left.maxX, y: frame.maxY - height, width: right.minX - left.maxX, height: height)
+        return CGRect(x: frame.minX + left.width, y: frame.maxY - height,
+                      width: frame.width - left.width - right.width, height: height)
     }
 
     static var notched: NSScreen? { screens.first { $0.notchFrame != nil } }
@@ -36,6 +39,35 @@ final class NotchPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+/// Hosting view that reports pointer movement over the panel even while the
+/// app is inactive, and lets the first click hit buttons directly.
+final class IslandHostingView<Content: View>: NSHostingView<Content> {
+    var onMouseMoved: (() -> Void)?
+    private var tracking: NSTrackingArea?
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: .zero,
+                                  options: [.activeAlways, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        onMouseMoved?()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        onMouseMoved?()
+    }
+}
+
 /// Owns the island panel on a notched display: positions it over the notch,
 /// tracks the pointer, expands on hover and keeps the transparent rest of the
 /// panel click-through.
@@ -52,9 +84,10 @@ final class NotchController {
         self.pinnedExpanded = pinnedExpanded
         panel = NotchPanel(contentRect: .zero)
         let root = IslandView(model: model, ui: ui, openSettings: openSettings, quit: quit)
-        let hosting = NSHostingView(rootView: root)
+        let hosting = IslandHostingView(rootView: root)
         hosting.sizingOptions = []
         panel.contentView = hosting
+        hosting.onMouseMoved = { [weak self] in self?.pointerMoved() }
         place(on: screen)
         if pinnedExpanded {
             ui.isExpanded = true
@@ -67,7 +100,9 @@ final class NotchController {
     func place(on screen: NSScreen) {
         let notch = screen.notchFrame ?? CGRect(x: screen.frame.midX - 95, y: screen.frame.maxY - 32, width: 190, height: 32)
         ui.notchSize = notch.size
-        let size = IslandMetrics.panelSize
+        // Shorter screens (e.g. "Larger Text" scaling) get a shorter panel.
+        ui.panelHeight = min(IslandMetrics.panelSize.height, screen.frame.height - 40)
+        let size = CGSize(width: IslandMetrics.panelSize.width, height: ui.panelHeight)
         let frame = CGRect(x: (notch.midX - size.width / 2).rounded(), y: screen.frame.maxY - size.height,
                            width: size.width, height: size.height)
         panel.setFrame(frame, display: true)

@@ -75,6 +75,7 @@ final class MenuBarController: NSObject {
         if popover.isShown {
             popover.performClose(nil)
         } else {
+            NSApp.activate() // otherwise the transient popover may not close on outside clicks
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
@@ -92,9 +93,9 @@ struct MenuBarLabel: View {
     var body: some View {
         HStack(spacing: 5) {
             if model.connection.problem != nil {
-                Image(systemName: model.connection == .needsKey ? "key.fill" : "exclamationmark.triangle.fill")
+                Image(systemName: model.connection.isTransient ? "bolt.horizontal.circle.fill" : "key.fill")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Theme.warning)
+                    .foregroundStyle(model.connection.isTransient ? Theme.danger : Theme.warning)
             } else if let account = model.featuredAccount {
                 QuotaRing(window: account.bindingWindow, tint: account.provider.tint, lineWidth: 2.2)
                     .frame(width: 11, height: 11)

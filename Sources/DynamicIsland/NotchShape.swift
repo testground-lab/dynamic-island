@@ -1,24 +1,19 @@
 import SwiftUI
 
-/// The island outline: flat top that flares outward into the menu bar
-/// (concave top corners, like the hardware notch) and rounded bottom corners.
-/// The flare eats `topRadius` on each side, so the solid body is
-/// `rect.width - 2 * topRadius` wide.
+/// The island outline: a flat top whose corners flare outward into the menu
+/// bar (concave, like the hardware notch) and rounded bottom corners.
+///
+/// Both radii follow the height, so a camera-tall strip keeps the cutout's
+/// own small corners and the open island gets full ones; as the frame
+/// animates, the corners morph with it. The flare takes `shoulder(height:)`
+/// on each side, so the solid body is `width - 2 * shoulder` wide.
 struct NotchShape: Shape {
-    var topRadius: CGFloat
-    var bottomRadius: CGFloat
-
-    var animatableData: AnimatablePair<CGFloat, CGFloat> {
-        get { AnimatablePair(topRadius, bottomRadius) }
-        set {
-            topRadius = newValue.first
-            bottomRadius = newValue.second
-        }
-    }
+    static func shoulder(height: CGFloat) -> CGFloat { min(14, height * 0.2) }
+    static func bottomRadius(height: CGFloat) -> CGFloat { min(26, height * 0.33) }
 
     func path(in rect: CGRect) -> Path {
-        let t = min(topRadius, rect.width / 4, rect.height / 2)
-        let b = min(bottomRadius, (rect.width - 2 * t) / 2, rect.height - t)
+        let t = min(Self.shoulder(height: rect.height), rect.width / 4)
+        let b = min(Self.bottomRadius(height: rect.height), (rect.width - 2 * t) / 2, rect.height)
         var p = Path()
         p.move(to: CGPoint(x: rect.minX, y: rect.minY))
         p.addQuadCurve(to: CGPoint(x: rect.minX + t, y: rect.minY + t),

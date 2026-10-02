@@ -12,18 +12,28 @@ enum Snapshots {
         let model = IslandModel.demo()
         let notch = CGSize(width: 220, height: 38)
 
-        for expanded in [false, true] {
+        let states: [(String, IslandPresentation, IslandTab)] = [
+            ("collapsed", .collapsed, .limits),
+            ("collapsed-hover", .emphasized, .limits),
+            ("expanded", .expanded(byHover: false), .limits),
+            ("expanded-usage", .expanded(byHover: false), .usage),
+        ]
+        for (name, presentation, tab) in states {
             let ui = IslandUIState()
             ui.notchSize = notch
-            ui.isExpanded = expanded
+            ui.presentation = presentation
+            ui.tab = tab
             ui.isSnapshot = true
-            let view = IslandView(model: model, ui: ui, openSettings: {}, quit: {})
-                .frame(width: IslandMetrics.panelSize.width, height: expanded ? IslandMetrics.panelSize.height : 80)
+            let expanded = ui.isExpanded
+            let view = IslandView(model: model, ui: ui, onTap: {}, onCameraTap: {}, openSettings: {}, quit: {})
+                .frame(width: IslandMetrics.panelSize.width, height: expanded ? 330 : 60)
                 .background(Color(white: 0.82)) // stand-in for a light desktop
-            try write(view, to: directory.appendingPathComponent(expanded ? "expanded.png" : "collapsed.png"))
+            try write(view, to: directory.appendingPathComponent(name + ".png"))
         }
         try write(MenuBarLabel(model: model).padding(6).background(Color(white: 0.9)),
                   to: directory.appendingPathComponent("menubar.png"))
+        try write(PopoverDashboard(model: model, scrollable: false, openSettings: {}),
+                  to: directory.appendingPathComponent("menubar-popover.png"))
     }
 
     private static func write(_ view: some View, to url: URL) throws {

@@ -22,86 +22,121 @@ struct QuotaRing: View {
     }
 }
 
-/// Horizontal "remaining" bar with label, percentage and reset time.
-struct QuotaBar: View {
+/// One limit window, dense: label, countdown to reset, % left, then a thin
+/// meter with a tick for how much of the window has elapsed (being left of
+/// the tick means quota is being used faster than time passes).
+struct LimitRow: View {
     var window: QuotaWindow
     var tint: Color
+    var now: Date
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+        let color = window.tint(base: tint)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 5) {
                 Text(window.label)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(1)
+                    .layoutPriority(1)
+                if let reset = Format.countdown(window.resetsAt, now: now) {
+                    HStack(spacing: 2) {
+                        Image(systemName: "arrow.clockwise").font(.system(size: 7.5, weight: .semibold))
+                        Text(reset)
+                    }
+                    .font(.system(size: 9.5))
                     .foregroundStyle(Theme.secondary)
-                Spacer(minLength: 4)
-                Text("\(Format.percent(window.remainingFraction)) left")
-                    .font(Theme.number(11))
-                    .foregroundStyle(window.tint(base: .white))
-            }
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.track)
-                    Capsule()
-                        .fill(window.tint(base: tint))
-                        .frame(width: geo.size.width * (window.remainingFraction ?? 0))
+                    .lineLimit(1)
                 }
+                Spacer(minLength: 2)
+                Text(Format.percent(window.remainingFraction))
+                    .font(Theme.number(12))
+                    .foregroundStyle(color == tint ? Color.white : color)
+                    .contentTransition(.numericText())
             }
-            .frame(height: 4)
-            if let reset = Format.reset(window.resetsAt) {
-                Text("resets \(reset)")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Theme.tertiary)
-            }
+            Meter(value: window.remainingFraction ?? 0,
+                  tick: window.elapsedFraction(now: now).map { 1 - $0 },
+                  tint: color)
         }
         .animation(Theme.spring, value: window.usedFraction)
+        .help(help)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(window.label) quota")
-        .accessibilityValue([Format.percent(window.remainingFraction) + " left",
-                             Format.reset(window.resetsAt).map { "resets \($0)" }]
-            .compactMap { $0 }.joined(separator: ", "))
+        .accessibilityValue(help)
+    }
+
+    private var help: String {
+        [Format.percent(window.remainingFraction) + " left",
+         window.resetsAt.map { "resets " + $0.formatted(.dateTime.weekday(.abbreviated).hour().minute()) }]
+            .compactMap { $0 }.joined(separator: ", ")
     }
 }
 
-struct HealthBadge: View {
-    var health: AccountHealth
+/// 4 pt capsule meter with an optional pace tick.
+struct Meter: View {
+    var value: Double
+    var tick: Double?
+    var tint: Color
+    var height: CGFloat = 4
 
     var body: some View {
-        if let (text, color) = describe() {
-            Text(text)
-                .font(.system(size: 9.5, weight: .semibold))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .foregroundStyle(color)
-                .background(color.opacity(0.16), in: Capsule())
-                .lineLimit(1)
+        let fraction = value.isFinite ? min(1, max(0, value)) : 0
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Theme.track)
+                Capsule().fill(tint.opacity(0.92))
+                    .frame(width: max(fraction > 0 ? height : 0, geo.size.width * fraction))
+                if let tick, tick > 0.02, tick < 0.98 {
+                    Capsule().fill(.white.opacity(0.8))
+                        .frame(width: 1.5, height: height + 4)
+                        .offset(x: geo.size.width * tick - 0.75)
+                }
+            }
+            .frame(height: geo.size.height)
         }
+        .frame(height: height + 4)
+        .accessibilityHidden(true)
     }
+}
 
-    private func describe() -> (String, Color)? {
-        switch health {
-        case .ok:
-            return nil
-        case .disabled:
-            return ("Disabled", Theme.tertiary)
-        case .error(let message):
-            return (message.isEmpty ? "Error" : String(message.prefix(28)), Theme.danger)
-        case .rateLimited(let until, _):
-            if let reset = Format.reset(until) { return ("Limited · \(reset)", Theme.warning) }
-            return ("Rate limited", Theme.warning)
+/// Tiny tinted label, e.g. a plan name or "Limited 29m".
+struct Chip: View {
+    var text: String
+    var tint: Color
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1.5)
+            .background(tint.opacity(0.15), in: Capsule())
+    }
+}
+
+extension AccountHealth {
+    /// Chip for anything but `.ok`.
+    var chip: (text: String, tint: Color)? {
+        switch self {
+        case .ok: nil
+        case .disabled: ("Off", Theme.tertiary)
+        case .error: ("Error", Theme.danger)
+        case .rateLimited(let until, _): ("Limited" + (Format.countdown(until).map { " " + $0 } ?? ""), Theme.warning)
         }
     }
 }
 
 struct ProviderGlyph: View {
     var provider: Provider
-    var size: CGFloat = 18
+    var size: CGFloat = 13
 
     var body: some View {
         Image(systemName: provider.symbol)
-            .font(.system(size: size * 0.5, weight: .bold))
+            .font(.system(size: size * 0.78, weight: .bold))
             .foregroundStyle(provider.tint)
-            .frame(width: size, height: size)
-            .background(provider.tint.opacity(0.18), in: RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
+            .frame(width: size + 4, height: size + 4)
+            .accessibilityHidden(true)
     }
 }
 

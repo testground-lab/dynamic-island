@@ -3,6 +3,11 @@ import SwiftUI
 
 enum Theme {
     static let spring = Animation.spring(response: 0.42, dampingFraction: 0.8)
+    /// Opening overshoots a little; closing settles without bounce and faster.
+    static let open = Animation.spring(duration: 0.42, bounce: 0.22)
+    static let close = Animation.spring(duration: 0.28, bounce: 0)
+    /// The hover "pulse" on the closed island.
+    static let emphasis = Animation.spring(duration: 0.3, bounce: 0.2)
     static let card = Color.white.opacity(0.06)
     static let cardStroke = Color.white.opacity(0.08)
     static let secondary = Color.white.opacity(0.55)
@@ -76,6 +81,15 @@ enum Format {
         if minutes < 1 { return "in <1m" }
         if minutes < 60 { return "in \(minutes)m" }
         return "in \(minutes / 60)h \(minutes % 60)m"
+    }
+
+    /// Compact time to a date: "2d 4h", "1h 59m", "29m". Never seconds.
+    static func countdown(_ date: Date?, now: Date = .now) -> String? {
+        guard let date else { return nil }
+        let minutes = max(1, Int((date.timeIntervalSince(now) / 60).rounded(.up)))
+        if minutes >= 24 * 60 { return "\(minutes / 1440)d \(minutes % 1440 / 60)h" }
+        if minutes >= 60 { return "\(minutes / 60)h \(minutes % 60)m" }
+        return "\(minutes)m"
     }
 
     static func ago(_ date: Date?, now: Date = .now) -> String {

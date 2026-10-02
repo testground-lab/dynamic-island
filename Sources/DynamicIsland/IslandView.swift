@@ -4,7 +4,8 @@ import SwiftUI
 /// UI-only state shared between the notch window controller and the views.
 @MainActor @Observable
 final class IslandUIState {
-    var isExpanded = false
+    var presentation: IslandPresentation = .collapsed
+    var tab: IslandTab = .limits
     /// Size of the hardware notch (or a stand-in on displays without one).
     var notchSize = CGSize(width: 190, height: 32)
     /// Island frame in window coordinates (top-left origin), used for hit-testing.
@@ -12,57 +13,57 @@ final class IslandUIState {
     var panelHeight: CGFloat = IslandMetrics.panelSize.height
     /// Offscreen rendering (no scroll views, see `Snapshots`).
     var isSnapshot = false
+
+    var isExpanded: Bool {
+        if case .expanded = presentation { return true }
+        return false
+    }
 }
 
 enum IslandMetrics {
-    static let wing: CGFloat = 56
-    static let expandedWidth: CGFloat = 580
-    static let collapsedFlare: CGFloat = 7
-    static let expandedFlare: CGFloat = 14
-    static let collapsedRadius: CGFloat = 11
-    static let expandedRadius: CGFloat = 28
-    /// Panel size: big enough for the expanded island; everything outside the
-    /// island is transparent and click-through.
-    static let panelSize = CGSize(width: expandedWidth + 2 * expandedFlare + 40, height: 760)
+    static let expandedWidth: CGFloat = 480
+    /// Horizontal inset of content from the open island's body edge.
+    static let contentInset: CGFloat = 14
+    static let bottomInset: CGFloat = 14
+    /// Collapsed wings beside the camera: as wide as their content, within these bounds.
+    static let wingRange: ClosedRange<CGFloat> = 44...80
+    /// Hover "pulse": growth per side and downward.
+    static let emphasisGrowth = CGSize(width: 10, height: 5)
+    /// Big enough for the open island plus its spring overshoot; the rest of
+    /// the panel is transparent and click-through.
+    static let panelSize = CGSize(width: expandedWidth + 64, height: 420)
 }
 
 struct IslandView: View {
     let model: IslandModel
     let ui: IslandUIState
+    /// Click on the island body (opens a closed island, pins a hover-opened one).
+    var onTap: () -> Void
+    /// Click on the camera area of the open header (closes it).
+    var onCameraTap: () -> Void
     var openSettings: () -> Void
     var quit: () -> Void
 
     var body: some View {
         let expanded = ui.isExpanded
-        let flare = expanded ? IslandMetrics.expandedFlare : IslandMetrics.collapsedFlare
-        let shape = NotchShape(topRadius: flare,
-                               bottomRadius: expanded ? IslandMetrics.expandedRadius : IslandMetrics.collapsedRadius)
-
         VStack(spacing: 0) {
             ZStack(alignment: .top) {
                 if expanded {
-                    DashboardView(model: model,
-                                  headerHeight: ui.notchSize.height,
-                                  maxContentHeight: ui.panelHeight - ui.notchSize.height - 60,
-                                  scrollable: !ui.isSnapshot,
-                                  openSettings: openSettings)
-                        .frame(width: IslandMetrics.expandedWidth - 40)
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 18)
+                    expandedContent
                         .transition(.asymmetric(
-                            insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .top))
-                                .animation(Theme.spring.delay(0.05)),
-                            removal: .opacity.animation(.easeOut(duration: 0.12))))
+                            insertion: .opacity.animation(.easeOut(duration: 0.2).delay(0.1)),
+                            removal: .opacity.animation(.easeIn(duration: 0.12))))
                 } else {
-                    CollapsedSummary(model: model, notchSize: ui.notchSize)
-                        .transition(.opacity.animation(.easeInOut(duration: 0.15)))
+                    CollapsedStrip(model: model, notchSize: ui.notchSize, emphasized: ui.presentation == .emphasized)
+                        .transition(.asymmetric(
+                            insertion: .opacity.animation(.easeOut(duration: 0.18).delay(0.12)),
+                            removal: .opacity.animation(.easeIn(duration: 0.08))))
                 }
             }
-            .padding(.horizontal, flare)
-            .background(shape.fill(.black))
-            .clipShape(shape)
-            .shadow(color: .black.opacity(expanded ? 0.45 : 0), radius: 18, y: 8)
-            .contentShape(shape)
+            .background(NotchShape().fill(.black))
+            .clipShape(NotchShape())
+            .contentShape(NotchShape())
+            .simultaneousGesture(TapGesture().onEnded(onTap))
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { ui.islandFrame = $0 }
             .contextMenu {
                 Button("Refresh Now") { model.refreshNow() }
@@ -73,30 +74,99 @@ struct IslandView: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .animation(Theme.spring, value: expanded)
+        .animation(expanded ? Theme.open : Theme.close, value: expanded)
+        .animation(Theme.emphasis, value: ui.presentation == .emphasized)
         .environment(\.colorScheme, .dark)
+    }
+
+    private var expandedContent: some View {
+        @Bindable var ui = ui
+        let shoulder = NotchShape.shoulder(height: 200)
+        return DashboardView(model: model, tab: $ui.tab,
+                             headerHeight: ui.notchSize.height,
+                             cameraGap: ui.notchSize.width,
+                             maxContentHeight: min(DashboardMetrics.contentBudget,
+                                                   ui.panelHeight - ui.notchSize.height - 40),
+                             scrollable: !ui.isSnapshot,
+                             onCameraTap: onCameraTap,
+                             openSettings: openSettings)
+            .padding(.horizontal, shoulder + IslandMetrics.contentInset)
+            .padding(.bottom, IslandMetrics.bottomInset)
+            .frame(width: IslandMetrics.expandedWidth)
     }
 }
 
-/// What shows while collapsed: quota ring of the busiest account on the left
-/// wing, requests in the last hour on the right wing. The middle is hidden
-/// behind the camera housing.
-struct CollapsedSummary: View {
+/// The closed island: exactly as tall as the camera, with a wing on each side.
+/// Left: quota ring + % left of the busiest account; right: requests per hour.
+/// Wings share one width (the wider content's), so the camera stays centred.
+struct CollapsedStrip: View {
     let model: IslandModel
     var notchSize: CGSize
+    var emphasized: Bool
+    @State private var leftWidth: CGFloat = 0
+    @State private var rightWidth: CGFloat = 0
+
+    private static let edgeInset: CGFloat = 9
 
     var body: some View {
+        let growth = emphasized ? IslandMetrics.emphasisGrowth : .zero
+        let height = notchSize.height + growth.height
+        let wing = min(max(max(leftWidth, rightWidth) + Self.edgeInset, IslandMetrics.wingRange.lowerBound),
+                       IslandMetrics.wingRange.upperBound) + growth.width
+        let shoulder = NotchShape.shoulder(height: height)
         HStack(spacing: 0) {
-            leftWing.frame(width: IslandMetrics.wing, alignment: .leading)
+            left
+                .fixedSize()
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { leftWidth = $0 }
+                .padding(.leading, Self.edgeInset)
+                .frame(width: wing, alignment: .leading)
             Color.clear.frame(width: notchSize.width)
-            rightWing.frame(width: IslandMetrics.wing, alignment: .trailing)
+            right
+                .fixedSize()
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { rightWidth = $0 }
+                .padding(.trailing, Self.edgeInset)
+                .frame(width: wing, alignment: .trailing)
         }
-        .padding(.horizontal, 2)
         .frame(height: notchSize.height)
+        .frame(height: height, alignment: .top)
+        .padding(.horizontal, shoulder)
         .foregroundStyle(.white)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("CLIProxy")
         .accessibilityValue(accessibilitySummary)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Opens the dashboard")
+    }
+
+    @ViewBuilder private var left: some View {
+        if model.connection.problem != nil {
+            Image(systemName: model.connection.isTransient ? "bolt.horizontal.circle.fill" : "key.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(model.connection.isTransient ? Theme.danger : Theme.warning)
+        } else if let account = model.featuredAccount, let window = account.bindingWindow {
+            HStack(spacing: 4) {
+                QuotaRing(window: window, tint: account.provider.tint, lineWidth: 2.2)
+                    .frame(width: 12, height: 12)
+                Text(Format.percent(window.remainingFraction))
+                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+                    .foregroundStyle(window.tint(base: account.provider.tint))
+                    .contentTransition(.numericText())
+            }
+        } else if let account = model.featuredAccount {
+            ProviderGlyph(provider: account.provider, size: 12)
+        } else {
+            ConnectionDot(state: model.connection)
+        }
+    }
+
+    private var right: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 1) {
+            Text("\(model.requestsLastHour)")
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .contentTransition(.numericText())
+            Text("/h").font(.system(size: 9, weight: .medium)).foregroundStyle(Theme.tertiary)
+        }
+        .opacity(model.connection.problem == nil ? 1 : 0.45)
     }
 
     private var accessibilitySummary: String {
@@ -107,35 +177,5 @@ struct CollapsedSummary: View {
         }
         parts.append("\(model.requestsLastHour) requests in the last hour")
         return parts.joined(separator: ", ")
-    }
-
-    @ViewBuilder private var leftWing: some View {
-        if model.connection.problem != nil {
-            Image(systemName: model.connection.isTransient ? "bolt.horizontal.circle.fill" : "key.fill")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(model.connection.isTransient ? Theme.danger : Theme.warning)
-                .padding(.leading, 10)
-        } else if let account = model.featuredAccount {
-            HStack(spacing: 5) {
-                QuotaRing(window: account.bindingWindow, tint: account.provider.tint, lineWidth: 2.5)
-                    .frame(width: 13, height: 13)
-                Text(Format.percent(account.bindingWindow?.remainingFraction))
-                    .font(Theme.number(11))
-                    .foregroundStyle(account.bindingWindow?.tint(base: .white) ?? Theme.secondary)
-            }
-            .padding(.leading, 10)
-            .help("\(account.provider.displayName) · \(account.label)")
-        } else {
-            ConnectionDot(state: model.connection).padding(.leading, 12)
-        }
-    }
-
-    private var rightWing: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 2) {
-            Text("\(model.requestsLastHour)").font(Theme.number(11))
-            Text("/h").font(.system(size: 9, weight: .medium)).foregroundStyle(Theme.tertiary)
-        }
-        .padding(.trailing, 10)
-        .opacity(model.connection.problem == nil ? 1 : 0.4)
     }
 }

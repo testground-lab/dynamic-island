@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var message: (text: String, isError: Bool)?
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var revertingLoginToggle = false
+    @AppStorage(NotchController.openOnHoverKey) private var openOnHover = false
 
     var body: some View {
         Form {
@@ -54,6 +55,12 @@ struct SettingsView: View {
             }
 
             Section("Behavior") {
+                Toggle("Open the island on hover", isOn: $openOnHover)
+                Text(openOnHover
+                     ? "Opens after resting on the notch for a moment and closes when the pointer leaves. A click keeps it open."
+                     : "Click the notch, or swipe down on it with two fingers, to open. Click elsewhere, press Esc or swipe up to close.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Toggle("Fetch live quota from Claude / Codex every 5 min", isOn: $model.liveQuotaEnabled)
                 Text("Asks the proxy to call each provider's usage endpoint with the account's own token. When off, quota comes only from rate-limit headers the proxy has seen.")
                     .font(.caption)

@@ -22,13 +22,10 @@ final class MenuBarController: NSObject {
         popover.behavior = .transient
         popover.appearance = NSAppearance(named: .darkAqua)
         popover.contentViewController = NSHostingController(rootView:
-            DashboardView(model: model, headerHeight: 26, maxContentHeight: 520, openSettings: { [weak self] in
+            PopoverDashboard(model: model, openSettings: { [weak self] in
                 self?.popover.performClose(nil)
                 openSettings()
             })
-            .frame(width: IslandMetrics.expandedWidth - 40)
-            .padding(18)
-            .background(.black)
             .environment(\.colorScheme, .dark))
 
         if let button = item.button {
@@ -109,5 +106,20 @@ struct MenuBarLabel: View {
         .padding(.horizontal, 7)
         .frame(height: 18)
         .background(.black, in: Capsule())
+    }
+}
+
+/// The dashboard in the popover: no camera, so the header is one row.
+struct PopoverDashboard: View {
+    let model: IslandModel
+    var scrollable = true
+    var openSettings: () -> Void
+    @State private var tab: IslandTab = .limits
+
+    var body: some View {
+        DashboardView(model: model, tab: $tab, headerHeight: 22, scrollable: scrollable, openSettings: openSettings)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(.black)
     }
 }

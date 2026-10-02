@@ -1,21 +1,81 @@
 import IslandCore
 import SwiftUI
 
-/// The expanded content: account quota cards + per-model usage.
+enum IslandTab: String, CaseIterable {
+    case limits = "Limits", usage = "Usage"
+
+    var next: IslandTab { self == .limits ? .usage : .limits }
+}
+
+enum DashboardMetrics {
+    /// Content column of the open island (480 wide minus shoulders and insets).
+    static let contentWidth: CGFloat = 424
+    static let spacing: CGFloat = 8
+    static let cardRadius: CGFloat = 14
+    /// Pages scroll past this.
+    static let contentBudget: CGFloat = 214
+}
+
+/// The open island's content: a header row beside the camera, then one page.
 /// Shared by the notch island and the menu-bar popover.
 struct DashboardView: View {
     let model: IslandModel
-    /// Height of the top band reserved for the header (the notch's height in
-    /// the island, so header items sit in the "wings" beside the camera).
+    @Binding var tab: IslandTab
+    /// Header height; in the island this is the camera's height so the header
+    /// sits in the menu-bar band beside it.
     var headerHeight: CGFloat = 28
-    var maxContentHeight: CGFloat = 470
+    /// Width of the camera between the header's halves (0: no camera).
+    var cameraGap: CGFloat = 0
+    var maxContentHeight: CGFloat = DashboardMetrics.contentBudget
     /// Off for offscreen snapshots: ImageRenderer can't draw scroll views.
     var scrollable = true
+    /// Click on the camera area of the header (closes the island).
+    var onCameraTap: (() -> Void)?
     var openSettings: () -> Void
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: DashboardMetrics.spacing) {
             header.frame(height: headerHeight)
+            page
+        }
+        .frame(width: DashboardMetrics.contentWidth)
+        .foregroundStyle(.white)
+    }
+
+    // MARK: Header
+
+    private var header: some View {
+        let side = (DashboardMetrics.contentWidth - cameraGap) / 2
+        return HStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Text(tab.rawValue)
+                    .font(.system(size: 13, weight: .semibold))
+                    .contentTransition(.opacity)
+                PageDots(tab: $tab)
+                Spacer(minLength: 0)
+            }
+            .frame(width: side, alignment: .leading)
+            Color.clear
+                .frame(width: cameraGap)
+                .contentShape(Rectangle())
+                .onTapGesture { onCameraTap?() }
+            HStack(spacing: 4) {
+                Spacer(minLength: 0)
+                ConnectionDot(state: model.connection)
+                    .padding(.trailing, 3)
+                    .help("Updated \(Format.ago(model.lastUpdated))")
+                IconButton(symbol: "arrow.clockwise", help: "Refresh now") { model.refreshNow() }
+                IconButton(symbol: "gearshape.fill", help: "Settings", action: openSettings)
+            }
+            .frame(width: side, alignment: .trailing)
+        }
+    }
+
+    // MARK: Page
+
+    @ViewBuilder private var page: some View {
+        TimelineView(.periodic(from: .now, by: 15)) { context in
+            let content = pageContent(now: context.date)
             if scrollable {
                 ViewThatFits(in: .vertical) {
                     content
@@ -26,43 +86,52 @@ struct DashboardView: View {
                 content
             }
         }
-        .foregroundStyle(.white)
     }
 
-    private var header: some View {
-        HStack(spacing: 8) {
-            ConnectionDot(state: model.connection)
-            Text("CLIProxy")
-                .font(.system(size: 12, weight: .semibold))
-            TimelineView(.periodic(from: .now, by: 5)) { context in
-                Text(Format.ago(model.lastUpdated, now: context.date))
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.tertiary)
-            }
-            Spacer()
-            IconButton(symbol: "arrow.clockwise", help: "Refresh now") { model.refreshNow() }
-            IconButton(symbol: "gearshape.fill", help: "Settings") { openSettings() }
-        }
-    }
-
-    private var content: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if let problem = model.connection.problem {
-                ProblemCard(title: problem.title, detail: problem.detail, transient: model.connection.isTransient,
-                            retry: { model.refreshNow() }, openSettings: openSettings)
-            }
-            if !model.accounts.isEmpty {
-                let active = model.accounts.filter { $0.health != .disabled }
-                let disabled = model.accounts.count - active.count
-                SectionTitle(title: "Accounts",
-                             trailing: disabled > 0 ? "\(active.count) active · \(disabled) disabled" : "\(active.count)")
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10, alignment: .top), count: 2),
-                          alignment: .leading, spacing: 10) {
-                    ForEach(active) { AccountCard(account: $0) }
+    @ViewBuilder private func pageContent(now: Date) -> some View {
+        if let problem = model.connection.problem, model.accounts.isEmpty {
+            ProblemView(title: problem.title, detail: problem.detail, transient: model.connection.isTransient,
+                        retry: { model.refreshNow() }, openSettings: openSettings)
+        } else {
+            VStack(spacing: DashboardMetrics.spacing) {
+                if let problem = model.connection.problem {
+                    ProblemBanner(title: problem.title, transient: model.connection.isTransient,
+                                  action: model.connection.isTransient ? { model.refreshNow() } : openSettings)
+                }
+                switch tab {
+                case .limits: LimitsPage(accounts: model.accounts, now: now)
+                case .usage: UsagePage(usage: model.usage, available: model.usageAvailable)
                 }
             }
-            UsageSection(usage: model.usage, available: model.usageAvailable)
+            .id(tab)
+            .transition(.opacity)
         }
+    }
+}
+
+// MARK: - Header pieces
+
+private struct PageDots: View {
+    @Binding var tab: IslandTab
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(IslandTab.allCases, id: \.self) { item in
+                Button {
+                    withAnimation(Theme.emphasis) { tab = item }
+                } label: {
+                    Capsule()
+                        .fill(.white.opacity(item == tab ? 0.9 : 0.25))
+                        .frame(width: item == tab ? 10 : 4, height: 4)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(item.rawValue)
+                .accessibilityAddTraits(item == tab ? .isSelected : [])
+            }
+        }
+        .help("Swipe sideways with two fingers to switch pages")
     }
 }
 
@@ -75,10 +144,10 @@ private struct IconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 11, weight: .semibold))
-                .frame(width: 24, height: 24)
+                .font(.system(size: 9.5, weight: .semibold))
+                .frame(width: 20, height: 20)
                 .foregroundStyle(hovering ? .white : Theme.secondary)
-                .background(Color.white.opacity(hovering ? 0.14 : 0.06), in: Circle())
+                .background(Color.white.opacity(hovering ? 0.14 : 0.07), in: Circle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
@@ -87,230 +156,181 @@ private struct IconButton: View {
     }
 }
 
-private struct SectionTitle: View {
-    var title: String
-    var trailing: String?
+// MARK: - Cards
+
+private struct CardChrome<Content: View>: View {
+    /// Stretch to the row's height (cards side by side share one height).
+    var fill = false
+    @ViewBuilder var content: Content
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(title.uppercased())
-                .font(.system(size: 10, weight: .bold))
-                .tracking(0.8)
-                .foregroundStyle(Theme.tertiary)
-            Spacer()
-            if let trailing {
-                Text(trailing).font(Theme.number(10, .medium)).foregroundStyle(Theme.tertiary)
-            }
-        }
+        content
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, maxHeight: fill ? .infinity : nil, alignment: .topLeading)
+            .background(.white.opacity(0.065),
+                        in: RoundedRectangle(cornerRadius: DashboardMetrics.cardRadius, style: .continuous))
     }
 }
 
-private struct ProblemCard: View {
-    var title: String
-    var detail: String
-    /// Proxy trouble (offer Retry) vs. a key problem (offer Settings).
-    var transient: Bool
-    var retry: () -> Void
-    var openSettings: () -> Void
-
-    private var tint: Color { transient ? Theme.danger : Theme.warning }
+private struct LimitsPage: View {
+    var accounts: [Account]
+    var now: Date
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: transient ? "bolt.horizontal.circle.fill" : "key.fill")
-                .foregroundStyle(tint)
-                .font(.system(size: 14))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 12, weight: .semibold))
-                Text(detail)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.secondary)
+        let active = accounts.filter { $0.health != .disabled }
+        if active.isEmpty {
+            EmptyNote(symbol: "person.crop.circle.badge.questionmark", text: "No accounts logged in to the proxy.")
+        } else {
+            let rows = stride(from: 0, to: active.count, by: 2).map { Array(active[$0..<min($0 + 2, active.count)]) }
+            VStack(spacing: DashboardMetrics.spacing) {
+                ForEach(rows, id: \.first?.id) { row in
+                    HStack(alignment: .top, spacing: DashboardMetrics.spacing) {
+                        ForEach(row) { AccountCard(account: $0, now: now) }
+                        if row.count == 1 { Color.clear.frame(maxWidth: .infinity) }
+                    }
                     .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            Spacer(minLength: 8)
-            Button(transient ? "Retry" : "Settings", action: transient ? retry : openSettings)
-                .buttonStyle(.plain)
-                .font(.system(size: 11, weight: .semibold))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Color.white.opacity(0.12), in: Capsule())
         }
-        .padding(12)
-        .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(tint.opacity(0.25)))
     }
 }
 
 struct AccountCard: View {
     var account: Account
+    var now: Date
+
+    /// Two rows fit: the shortest window and whichever longer one binds first.
+    private var windows: [QuotaWindow] {
+        guard let first = account.windows.first else { return [] }
+        let longer = account.windows.dropFirst().max { ($0.usedFraction ?? 0) < ($1.usedFraction ?? 0) }
+        return [first, longer].compactMap { $0 }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 8) {
-                ProviderGlyph(provider: account.provider, size: 22)
-                VStack(alignment: .leading, spacing: 1) {
+        CardChrome(fill: true) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 5) {
+                    ProviderGlyph(provider: account.provider)
                     Text(account.label)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.9))
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    Text(subtitle)
+                    Spacer(minLength: 2)
+                    if let chip = account.health.chip {
+                        Chip(text: chip.text, tint: chip.tint)
+                    } else if let plan = account.plan {
+                        Chip(text: plan.capitalized, tint: account.provider.tint)
+                    }
+                }
+                .frame(height: 17)
+                if windows.isEmpty {
+                    Text(emptyText)
                         .font(.system(size: 10))
-                        .foregroundStyle(Theme.tertiary)
-                        .lineLimit(1)
+                        .foregroundStyle(Theme.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    VStack(spacing: 5) {
+                        ForEach(windows) { LimitRow(window: $0, tint: account.provider.tint, now: now) }
+                    }
                 }
-                Spacer(minLength: 0)
-            }
-            HealthBadge(health: account.health)
-            if account.windows.isEmpty {
-                Text(emptyQuotaText)
-                    .font(.system(size: 10.5))
+                Text(footer)
+                    .font(.system(size: 9.5))
                     .foregroundStyle(Theme.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                ForEach(account.windows.prefix(3)) { QuotaBar(window: $0, tint: account.provider.tint) }
-            }
-            HStack(spacing: 6) {
-                Text("\(account.requestsLastHour) req/h")
-                    .font(Theme.number(10, .medium))
-                    .foregroundStyle(Theme.secondary)
-                if account.failedLastHour > 0 {
-                    Text("\(account.failedLastHour) failed")
-                        .font(Theme.number(10, .medium))
-                        .foregroundStyle(Theme.danger)
-                }
-                Spacer(minLength: 0)
-                if let source = sourceText {
-                    Text(source).font(.system(size: 9.5)).foregroundStyle(Theme.tertiary)
-                }
+                    .lineLimit(1)
             }
         }
-        .padding(11)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.cardStroke))
-    }
-
-    private var subtitle: String {
-        [account.provider.displayName, account.plan?.capitalized].compactMap { $0 }.joined(separator: " · ")
-    }
-
-    private var emptyQuotaText: String {
-        switch account.provider {
-        case .claude, .codex: "No quota reading yet. It appears after the next request or live fetch."
-        default: "This provider doesn't report quota."
-        }
-    }
-
-    private var sourceText: String? {
-        switch account.quotaSource {
-        case .live(let at): "live · \(Format.ago(at))"
-        case .headers(let at): "seen \(Format.ago(at))"
-        case .none: nil
-        }
-    }
-}
-
-private struct UsageSection: View {
-    var usage: UsageSummary
-    var available: Bool
-    @State private var range: Range = .hour
-
-    enum Range: String, CaseIterable { case hour = "Last hour", today = "Today" }
-
-    var body: some View {
-        let rows = range == .hour ? usage.lastHour : usage.today
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center) {
-                SectionTitle(title: "Usage by model")
-                Spacer()
-                RangeToggle(selection: $range)
-            }
-            if !available {
-                note("This proxy doesn't expose the usage queue, so per-model usage is unavailable.")
-            } else if rows.isEmpty {
-                note(emptyText)
-            } else {
-                totals(rows)
-                let maxTokens = max(rows.map(\.totalTokens).max() ?? 1, 1)
-                VStack(spacing: 6) {
-                    ForEach(rows.prefix(6)) { ModelRow(usage: $0, share: Double($0.totalTokens) / Double(maxTokens)) }
-                }
-                if rows.count > 6 {
-                    Text("+ \(rows.count - 6) more models").font(.system(size: 10)).foregroundStyle(Theme.tertiary)
-                }
-            }
-        }
+        .accessibilityElement(children: .combine)
     }
 
     private var emptyText: String {
-        if let since = usage.trackingSince {
-            return "No requests \(range == .hour ? "in the last hour" : "today") since tracking started \(since.formatted(.dateTime.hour().minute()))."
+        switch account.provider {
+        case .claude, .codex: "No reading yet. It appears after the next request."
+        default: "\(account.provider.displayName) doesn't report quota."
         }
-        return "Waiting for the first requests."
+    }
+
+    private var footer: String {
+        var parts = ["\(account.requestsLastHour) req/h"]
+        if account.failedLastHour > 0 { parts.append("\(account.failedLastHour) failed") }
+        switch account.quotaSource {
+        case .live(let at): parts.append("live \(Format.ago(at, now: now))")
+        case .headers(let at): parts.append("seen \(Format.ago(at, now: now))")
+        case .none: break
+        }
+        return parts.joined(separator: " · ")
+    }
+}
+
+private struct UsagePage: View {
+    var usage: UsageSummary
+    var available: Bool
+    @State private var today = false
+
+    var body: some View {
+        let rows = today ? usage.today : usage.lastHour
+        CardChrome {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 5) {
+                    Image(systemName: "cpu").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.secondary)
+                        .frame(width: 17)
+                    Text("Models").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.white.opacity(0.9))
+                    Spacer(minLength: 4)
+                    Button {
+                        withAnimation(Theme.emphasis) { today.toggle() }
+                    } label: {
+                        HStack(spacing: 2) {
+                            Text(today ? "Today" : "Last hour")
+                            Image(systemName: "chevron.up.chevron.down").font(.system(size: 7, weight: .bold))
+                        }
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(Theme.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(.white.opacity(0.08), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Switch between the last hour and today")
+                }
+                .frame(height: 17)
+                if !available {
+                    note("This proxy doesn't expose its usage queue.")
+                } else if rows.isEmpty {
+                    note(usage.trackingSince.map { "No requests \(today ? "today" : "in the last hour") since \($0.formatted(.dateTime.hour().minute()))." }
+                         ?? "Waiting for the first requests.")
+                } else {
+                    totals(rows)
+                    let peak = max(rows.map(\.totalTokens).max() ?? 1, 1)
+                    VStack(spacing: 5) {
+                        ForEach(rows.prefix(8)) { ModelRow(usage: $0, share: Double($0.totalTokens) / Double(peak)) }
+                    }
+                    if rows.count > 8 {
+                        Text("+\(rows.count - 8) more").font(.system(size: 9.5)).foregroundStyle(Theme.tertiary)
+                    }
+                }
+            }
+        }
     }
 
     private func totals(_ rows: [ModelUsage]) -> some View {
         let tokens = rows.reduce(0) { $0 + $1.totalTokens }
         let requests = rows.reduce(0) { $0 + $1.requests }
         let failed = rows.reduce(0) { $0 + $1.failed }
-        return HStack(alignment: .firstTextBaseline, spacing: 14) {
-            Stat(value: Format.tokens(tokens), label: "tokens")
-            Stat(value: "\(requests)", label: "requests")
-            if failed > 0 { Stat(value: "\(failed)", label: "failed", tint: Theme.danger) }
+        return HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Text(Format.tokens(tokens)).font(Theme.number(18, .medium)).contentTransition(.numericText())
+            Text("tokens · \(requests) req")
+                .font(.system(size: 9.5))
+                .foregroundStyle(Theme.secondary)
+            if failed > 0 {
+                Text("· \(failed) failed").font(.system(size: 9.5)).foregroundStyle(Theme.warning)
+            }
         }
     }
 
     private func note(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11))
-            .foregroundStyle(Theme.tertiary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-}
-
-private struct Stat: View {
-    var value: String
-    var label: String
-    var tint: Color = .white
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Text(value).font(Theme.number(17, .bold)).foregroundStyle(tint)
-            Text(label).font(.system(size: 10.5)).foregroundStyle(Theme.tertiary)
-        }
-    }
-}
-
-private struct RangeToggle: View {
-    @Binding var selection: UsageSection.Range
-    @Namespace private var ns
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(UsageSection.Range.allCases, id: \.self) { range in
-                Button {
-                    withAnimation(Theme.spring) { selection = range }
-                } label: {
-                    Text(range.rawValue)
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(selection == range ? .black : Theme.secondary)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 3)
-                        .background {
-                            if selection == range {
-                                Capsule().fill(.white).matchedGeometryEffect(id: "pill", in: ns)
-                            }
-                        }
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(selection == range ? .isSelected : [])
-            }
-        }
-        .padding(2)
-        .background(Color.white.opacity(0.08), in: Capsule())
+        Text(text).font(.system(size: 10)).foregroundStyle(Theme.secondary).lineLimit(2)
     }
 }
 
@@ -319,31 +339,108 @@ private struct ModelRow: View {
     var share: Double
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 6) {
             Text(usage.model)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 10.5, weight: .medium))
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(width: 170, alignment: .leading)
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.track)
-                    Capsule()
-                        .fill(LinearGradient(colors: [.white.opacity(0.9), .white.opacity(0.55)],
-                                             startPoint: .leading, endPoint: .trailing))
-                        .frame(width: max(geo.size.width * share, 3))
-                }
-            }
-            .frame(height: 5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Capsule()
+                .fill(.white.opacity(0.85))
+                .frame(width: max(3, 60 * share), height: 4)
+                .frame(width: 60, alignment: .leading)
             Text(Format.tokens(usage.totalTokens))
-                .font(Theme.number(11))
-                .frame(width: 46, alignment: .trailing)
-            Text("\(usage.requests) req")
                 .font(Theme.number(10, .medium))
+                .frame(minWidth: 38, alignment: .trailing)
+            Text("\(usage.requests)")
+                .font(Theme.number(9.5, .regular))
                 .foregroundStyle(usage.failed > 0 ? Theme.warning : Theme.tertiary)
-                .frame(width: 50, alignment: .trailing)
-                .help(usage.failed > 0 ? "\(usage.failed) failed" : "")
+                .frame(minWidth: 22, alignment: .trailing)
+                .help(usage.failed > 0 ? "\(usage.requests) requests, \(usage.failed) failed" : "\(usage.requests) requests")
         }
+        .frame(height: 14)
         .animation(Theme.spring, value: share)
+    }
+}
+
+// MARK: - States
+
+private struct EmptyNote: View {
+    var symbol: String
+    var text: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol).font(.system(size: 11)).foregroundStyle(Theme.secondary)
+            Text(text).font(.system(size: 10.5)).foregroundStyle(Theme.secondary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 44)
+    }
+}
+
+/// The whole page when there's nothing else to show.
+private struct ProblemView: View {
+    var title: String
+    var detail: String
+    var transient: Bool
+    var retry: () -> Void
+    var openSettings: () -> Void
+
+    var body: some View {
+        let tint = transient ? Theme.danger : Theme.warning
+        CardChrome {
+            HStack(alignment: .center, spacing: 9) {
+                Image(systemName: transient ? "bolt.horizontal.circle.fill" : "key.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(size: 11, weight: .semibold))
+                    Text(detail)
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 6)
+                PillButton(title: transient ? "Retry" : "Settings", action: transient ? retry : openSettings)
+            }
+        }
+    }
+}
+
+/// One-line warning above stale content (e.g. the proxy went down after a good poll).
+private struct ProblemBanner: View {
+    var title: String
+    var transient: Bool
+    var action: () -> Void
+
+    var body: some View {
+        let tint = transient ? Theme.danger : Theme.warning
+        HStack(spacing: 6) {
+            Image(systemName: transient ? "bolt.horizontal.circle.fill" : "key.fill")
+                .font(.system(size: 10))
+            Text(title + " · showing last reading").font(.system(size: 10, weight: .medium)).lineLimit(1)
+            Spacer(minLength: 4)
+            PillButton(title: transient ? "Retry" : "Settings", action: action)
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+private struct PillButton: View {
+    var title: String
+    var action: () -> Void
+
+    var body: some View {
+        Button(title, action: action)
+            .buttonStyle(.plain)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(.white.opacity(0.14), in: Capsule())
     }
 }

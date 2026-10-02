@@ -1,7 +1,7 @@
 import Foundation
 
 public actor UsageAggregator {
-    private struct Bucket: Codable {
+    private struct Bucket: Codable, Equatable {
         var minute: Int
         var model: String
         var requests: Int = 0
@@ -10,55 +10,137 @@ public actor UsageAggregator {
         var output: Int = 0
         var total: Int = 0
     }
-    private struct BucketKey: Hashable { let minute: Int; let model: String }
-    private struct Snapshot: Codable { var trackingSince: Date?; var buckets: [Bucket] }
+
+    private struct BucketKey: Hashable {
+        let minute: Int
+        let model: String
+    }
+
+    private struct Snapshot: Codable {
+        var trackingSince: Date?
+        var buckets: [Bucket]
+    }
+
     private var buckets: [BucketKey: Bucket] = [:]
     private var trackingSince: Date?
     private let persistenceURL: URL?
     private let calendar: Calendar
     private let nowProvider: @Sendable () -> Date
-    public init(persistenceURL: URL?, calendar: Calendar = .current, now: @escaping @Sendable () -> Date = { Date() }) {
-        self.persistenceURL = persistenceURL; self.calendar = calendar; self.nowProvider = now
-        if let url = persistenceURL, let data = try? Data(contentsOf: url), let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) {
+
+    public init(
+        persistenceURL: URL?, calendar: Calendar = .current,
+        now: @escaping @Sendable () -> Date = { Date() }
+    ) {
+        self.persistenceURL = persistenceURL
+        self.calendar = calendar
+        self.nowProvider = now
+        if let url = persistenceURL,
+            let data = try? Data(contentsOf: url),
+            let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data)
+        {
             trackingSince = snapshot.trackingSince
-            for bucket in snapshot.buckets where bucket.requests >= 0 && bucket.failed >= 0 && bucket.input >= 0 && bucket.output >= 0 && bucket.total >= 0 {
-                buckets[BucketKey(minute: bucket.minute, model: bucket.model)] = bucket
+            let current = now()
+            var models: Set<String> = []
+            for var bucket in snapshot.buckets.sorted(by: { $0.model < $1.model }) {
+                guard bucket.requests >= 0, bucket.failed >= 0, bucket.input >= 0,
+                    bucket.output >= 0, bucket.total >= 0,
+                    let minute = Self.boundedMinute(
+                        Date(timeIntervalSince1970: Double(bucket.minute)), now: current)
+                else {
+                    continue
+                }
+                bucket.minute = minute
+                bucket.model = Self.boundedModel(bucket.model, models: models)
+                models.insert(bucket.model)
+                let key = BucketKey(minute: bucket.minute, model: bucket.model)
+                buckets[key] = Self.merge(buckets[key], bucket)
             }
         }
     }
+
     public func ingest(_ records: [UsageRecord]) {
         let now = nowProvider()
+        let previousBuckets = buckets
+        let previousTrackingSince = trackingSince
         if trackingSince == nil { trackingSince = now }
+        let oldestMinute = floor((now.timeIntervalSince1970 - 48 * 3600) / 60) * 60
+        buckets = buckets.filter { Double($0.key.minute) >= oldestMinute }
+        var models = Set(buckets.keys.map(\.model))
         for record in records {
-            let date = record.timestamp ?? now
-            guard let minute = safeInteger(floor(date.timeIntervalSince1970 / 60) * 60) else { continue }
-            let model = [record.model, record.alias].compactMap { $0 }.first { !$0.isEmpty } ?? "unknown"
+            guard let minute = Self.boundedMinute(record.timestamp ?? now, now: now) else {
+                continue
+            }
+            let rawModel =
+                [record.model, record.alias].compactMap { $0 }.first { !$0.isEmpty } ?? "unknown"
+            let model = Self.boundedModel(rawModel, models: models)
+            models.insert(model)
             let key = BucketKey(minute: minute, model: model)
-            var bucket = buckets[key] ?? Bucket(minute: minute, model: model)
-            let input = nonnegative(record.tokens?.inputTokens); let output = nonnegative(record.tokens?.outputTokens)
+            let input = nonnegative(record.tokens?.inputTokens)
+            let output = nonnegative(record.tokens?.outputTokens)
             let supplied = nonnegative(record.tokens?.totalTokens)
-            let total = supplied > 0 ? supplied : addingCounts(addingCounts(input, output), nonnegative(record.tokens?.reasoningTokens))
-            bucket.requests = addingCounts(bucket.requests, 1); bucket.failed = addingCounts(bucket.failed, record.failed == true ? 1 : 0)
-            bucket.input = addingCounts(bucket.input, input); bucket.output = addingCounts(bucket.output, output); bucket.total = addingCounts(bucket.total, total)
-            buckets[key] = bucket
+            let total =
+                supplied > 0
+                ? supplied
+                : addingCounts(
+                    addingCounts(input, output), nonnegative(record.tokens?.reasoningTokens))
+            let addition = Bucket(
+                minute: minute, model: model, requests: 1, failed: record.failed == true ? 1 : 0,
+                input: input, output: output, total: total
+            )
+            buckets[key] = Self.merge(buckets[key], addition)
         }
-        buckets = buckets.filter { Double($0.key.minute) >= now.timeIntervalSince1970 - 48 * 3600 }
-        persist()
+        if previousBuckets != buckets || previousTrackingSince != trackingSince { persist() }
     }
+
+    private static func boundedMinute(_ date: Date, now: Date) -> Int? {
+        let seconds = date.timeIntervalSince1970
+        guard seconds.isFinite, seconds >= now.timeIntervalSince1970 - 48 * 3600 else { return nil }
+        return safeInteger(floor(min(seconds, now.timeIntervalSince1970) / 60) * 60)
+    }
+
+    private static func boundedModel(_ name: String, models: Set<String>) -> String {
+        let truncated = String((name.isEmpty ? "unknown" : name).prefix(64))
+        if models.contains(truncated) { return truncated }
+        // Reserve one of the 50 slots for overflow, so total cardinality never exceeds 50.
+        let capacity = models.contains("other") ? 50 : 49
+        return models.count < capacity ? truncated : "other"
+    }
+
+    private static func merge(_ existing: Bucket?, _ addition: Bucket) -> Bucket {
+        guard var result = existing else { return addition }
+        result.requests = addingCounts(result.requests, addition.requests)
+        result.failed = addingCounts(result.failed, addition.failed)
+        result.input = addingCounts(result.input, addition.input)
+        result.output = addingCounts(result.output, addition.output)
+        result.total = addingCounts(result.total, addition.total)
+        return result
+    }
+
     public func summary(now: Date) -> UsageSummary {
         let hour = now.timeIntervalSince1970 - 3600
         let today = calendar.startOfDay(for: now).timeIntervalSince1970
         let end = now.timeIntervalSince1970
-        return UsageSummary(lastHour: summarize { Double($0.minute) > hour && Double($0.minute) <= end },
-                            today: summarize { Double($0.minute) >= today && Double($0.minute) <= end }, trackingSince: trackingSince)
+        return UsageSummary(
+            lastHour: summarize { Double($0.minute) > hour && Double($0.minute) <= end },
+            today: summarize { Double($0.minute) >= today && Double($0.minute) <= end },
+            trackingSince: trackingSince
+        )
     }
+
     private func summarize(_ include: (Bucket) -> Bool) -> [ModelUsage] {
         var result: [String: ModelUsage] = [:]
-        for b in buckets.values where include(b) {
-            var m = result[b.model] ?? ModelUsage(model: b.model, requests: 0, failed: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0)
-            m.requests = addingCounts(m.requests, b.requests); m.failed = addingCounts(m.failed, b.failed)
-            m.inputTokens = addingCounts(m.inputTokens, b.input); m.outputTokens = addingCounts(m.outputTokens, b.output); m.totalTokens = addingCounts(m.totalTokens, b.total)
-            result[b.model] = m
+        for bucket in buckets.values where include(bucket) {
+            var model =
+                result[bucket.model]
+                ?? ModelUsage(
+                    model: bucket.model, requests: 0, failed: 0, inputTokens: 0, outputTokens: 0,
+                    totalTokens: 0)
+            model.requests = addingCounts(model.requests, bucket.requests)
+            model.failed = addingCounts(model.failed, bucket.failed)
+            model.inputTokens = addingCounts(model.inputTokens, bucket.input)
+            model.outputTokens = addingCounts(model.outputTokens, bucket.output)
+            model.totalTokens = addingCounts(model.totalTokens, bucket.total)
+            result[bucket.model] = model
         }
         return result.values.sorted {
             if $0.totalTokens != $1.totalTokens { return $0.totalTokens > $1.totalTokens }
@@ -66,10 +148,23 @@ public actor UsageAggregator {
             return $0.model < $1.model
         }
     }
-    public func reset() { buckets = [:]; trackingSince = nil; persist() }
+
+    public func reset() {
+        guard !buckets.isEmpty || trackingSince != nil else { return }
+        buckets = [:]
+        trackingSince = nil
+        persist()
+    }
+
     private func persist() {
-        guard let url = persistenceURL, let data = try? JSONEncoder().encode(Snapshot(trackingSince: trackingSince, buckets: Array(buckets.values))) else { return }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard let url = persistenceURL,
+            let data = try? JSONEncoder().encode(
+                Snapshot(trackingSince: trackingSince, buckets: Array(buckets.values)))
+        else {
+            return
+        }
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: url, options: .atomic)
     }
 }

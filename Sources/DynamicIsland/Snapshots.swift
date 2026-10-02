@@ -22,7 +22,9 @@ enum Snapshots {
             ("idle", model, .collapsed, 0, .today),
             ("idle-hover", model, .emphasized, 0, .today),
             ("open-top", model, .expanded(byHover: false), 0, .today),
-            ("open-scrolled-usage", model, .expanded(byHover: false), 236, .week),
+            ("usage-today", model, .expanded(byHover: false), 236, .today),
+            ("usage-7d", model, .expanded(byHover: false), 236, .week),
+            ("usage-30d", model, .expanded(byHover: false), 236, .month),
             ("open-no-key", keyless, .expanded(byHover: false), 0, .today),
         ]
         for (name, model, presentation, offset, range) in states {

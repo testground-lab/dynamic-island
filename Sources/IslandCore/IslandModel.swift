@@ -7,6 +7,7 @@ private let usageLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: 
 @MainActor @Observable public final class IslandModel {
     public private(set) var accounts: [Account] = []
     public private(set) var usageReports: [UsageRange: UsageReport] = [:]
+    public private(set) var usageSeries: [UsageRange: UsageSeries] = [:]
     public private(set) var connection: ConnectionState = .connecting
     public private(set) var lastUpdated: Date?
     public private(set) var usageAvailable = true
@@ -49,6 +50,7 @@ private let usageLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: 
         self.defaults = defaults
         self.store = store
         self.usageReports = store.initialReports
+        self.usageSeries = store.initialSeries
         self.clientFactory = clientFactory
         self.nowProvider = now
         baseURLString = defaults.string(forKey: "baseURL") ?? BaseURLValidator.defaultBaseURL
@@ -101,6 +103,7 @@ private let usageLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: 
         connection = .needsKey
         accounts = []
         usageReports = [:]
+        usageSeries = [:]
         reportsDirty = true
         lastUpdated = nil
         live = [:]
@@ -240,11 +243,14 @@ private let usageLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: 
             return
         }
         var reports: [UsageRange: UsageReport] = [:]
+        var series: [UsageRange: UsageSeries] = [:]
         for range in UsageRange.allCases {
             reports[range] = await store.report(range, accounts: currentAccounts, now: now)
+            series[range] = await store.series(range, now: now)
         }
         guard generation == current, !Task.isCancelled else { return }
         if reports != usageReports { usageReports = reports }
+        if series != usageSeries { usageSeries = series }
         reportsDirty = false
         lastReportDay = day
         lastReportAccounts = currentAccounts

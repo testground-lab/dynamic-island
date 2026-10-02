@@ -150,11 +150,83 @@ public enum UsageRange: String, CaseIterable, Hashable, Sendable {
         }
     }
 
+    public var granularity: UsageGranularity { self == .today ? .hour : .day }
+
     public func start(now: Date, calendar: Calendar) -> Date {
         let today = calendar.startOfDay(for: now)
         let days = self == .today ? 0 : self == .week ? -6 : -29
         return calendar.date(byAdding: .day, value: days, to: today) ?? today
     }
+}
+
+public enum UsageGranularity: Hashable, Sendable {
+    case hour, day
+}
+
+public struct ProviderTokens: Hashable, Sendable {
+    public var provider: Provider
+    public var inputTokens: Int
+    public var outputTokens: Int
+    public var totalTokens: Int
+    public var requests: Int
+
+    public init(
+        provider: Provider, inputTokens: Int, outputTokens: Int, totalTokens: Int, requests: Int
+    ) {
+        self.provider = provider
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.totalTokens = totalTokens
+        self.requests = requests
+    }
+}
+
+public struct UsageSeriesPoint: Identifiable, Hashable, Sendable {
+    public var id: Date { start }
+    public let start: Date
+    public let end: Date
+    public let byProvider: [ProviderTokens]
+    public let recorded: Bool
+    public let partial: Bool
+    public let future: Bool
+
+    public init(
+        start: Date, end: Date, byProvider: [ProviderTokens] = [],
+        trackingSince: Date? = nil, now: Date
+    ) {
+        self.start = start
+        self.end = end
+        self.byProvider = byProvider.sorted {
+            if $0.totalTokens != $1.totalTokens { return $0.totalTokens > $1.totalTokens }
+            return $0.provider.displayName < $1.provider.displayName
+        }
+        recorded = trackingSince.map { end > $0 } ?? false
+        partial = trackingSince.map { start <= $0 && $0 < end } ?? false
+        future = start > now
+    }
+
+    public var totalTokens: Int {
+        byProvider.reduce(0) { addingCounts($0, $1.totalTokens) }
+    }
+}
+
+public struct UsageSeries: Hashable, Sendable {
+    public var range: UsageRange
+    public var granularity: UsageGranularity
+    public var points: [UsageSeriesPoint]
+    public var trackingSince: Date?
+
+    public init(
+        range: UsageRange, granularity: UsageGranularity, points: [UsageSeriesPoint],
+        trackingSince: Date? = nil
+    ) {
+        self.range = range
+        self.granularity = granularity
+        self.points = points
+        self.trackingSince = trackingSince
+    }
+
+    public var peakTokens: Int { points.map(\.totalTokens).max() ?? 0 }
 }
 
 public struct UsageTotals: Hashable, Sendable {

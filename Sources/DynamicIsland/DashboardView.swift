@@ -133,8 +133,8 @@ struct DashboardView: View {
                        emptyText: limitsEmptyText)
             SectionHeader(title: "Usage") { RangePicker(range: $range) }
                 .padding(.top, 4)
-            UsagePage(report: model.usageReports[range], state: model.usageState(for: range),
-                      queueIssue: queueIssue)
+            UsagePage(report: model.usageReports[range], series: model.usageSeries[range],
+                      state: model.usageState(for: range), queueIssue: queueIssue, now: now)
         }
     }
 }
@@ -314,10 +314,12 @@ struct AccountCard: View {
 
 private struct UsagePage: View {
     var report: UsageReport?
+    var series: UsageSeries?
     var state: UsageState
     /// A usage-queue problem to mention above recorded data (connection
     /// problems already have their banner at the top).
     var queueIssue: String?
+    var now: Date
 
     var body: some View {
         VStack(spacing: DashboardMetrics.spacing) {
@@ -331,6 +333,7 @@ private struct UsagePage: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         totals(report)
+                        if let series { TokenChart(series: series, now: now).padding(.top, 2) }
                         if report.isPartial { partialNote(report) }
                     } else if let message = state.message {
                         Label(message, systemImage: symbol)

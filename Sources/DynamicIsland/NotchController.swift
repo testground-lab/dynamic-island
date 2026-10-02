@@ -36,7 +36,10 @@ final class NotchPanel: NSPanel {
         hidesOnDeactivate = false
     }
 
-    override var canBecomeKey: Bool { true }
+    /// Key focus only while a click-opened island is up, so typing and
+    /// shortcuts otherwise keep going to the frontmost app.
+    var acceptsKey = false
+    override var canBecomeKey: Bool { acceptsKey }
     override var canBecomeMain: Bool { false }
 }
 
@@ -90,15 +93,22 @@ final class NotchController {
         interaction = IslandInteraction(openOnHover: UserDefaults.standard.bool(forKey: Self.openOnHoverKey))
         panel = NotchPanel(contentRect: .zero)
         var tap: () -> Void = {}
-        var cameraTap: () -> Void = {}
-        let root = IslandView(model: model, ui: ui, onTap: { tap() }, onCameraTap: { cameraTap() },
+        let root = IslandView(model: model, ui: ui, onTap: { tap() },
                               openSettings: openSettings, quit: quit)
         let hosting = IslandHostingView(rootView: root)
         hosting.sizingOptions = []
         panel.contentView = hosting
         place(on: screen)
-        tap = { [weak self] in self?.send { $0.clicked() } }
-        cameraTap = { [weak self] in self?.send { $0.toggle() } }
+        // One tap handler for the whole island: on the open island, the camera
+        // area of the header closes it; anywhere else a click opens or pins.
+        tap = { [weak self] in
+            guard let self else { return }
+            if self.interaction.isExpanded, self.cameraRect.contains(NSEvent.mouseLocation) {
+                self.send { $0.dismiss() }
+            } else {
+                self.send { $0.clicked() }
+            }
+        }
         hosting.onMouseMoved = { [weak self] in self?.pointerMoved() }
         if pinnedExpanded {
             ui.presentation = .expanded(byHover: false)
@@ -110,8 +120,12 @@ final class NotchController {
 
     static let openOnHoverKey = "openOnHover"
 
+    private var cameraRect: CGRect = .zero
+
     func place(on screen: NSScreen) {
+        if interaction.isExpanded { send { $0.dismiss() } }
         let notch = screen.notchFrame ?? CGRect(x: screen.frame.midX - 95, y: screen.frame.maxY - 32, width: 190, height: 32)
+        cameraRect = notch
         ui.notchSize = notch.size
         // Shorter screens (e.g. "Larger Text" scaling) get a shorter panel.
         ui.panelHeight = min(IslandMetrics.panelSize.height, screen.frame.height - 40)
@@ -138,8 +152,11 @@ final class NotchController {
         interaction.openOnHover = UserDefaults.standard.bool(forKey: Self.openOnHoverKey)
         let effects = event(&interaction)
         if ui.presentation != interaction.presentation {
-            if !interaction.isExpanded, panel.isKeyWindow { panel.resignKey() }
+            if !interaction.isExpanded { releaseFocus() }
             ui.presentation = interaction.presentation
+            // The island's hit area changed under a pointer that may not move:
+            // re-evaluate click-through once the new frame is laid out.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.pointerMoved() }
         }
         effects.forEach(run)
     }
@@ -159,7 +176,18 @@ final class NotchController {
         case .haptic:
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         case .takeFocus:
+            panel.acceptsKey = true
             panel.makeKey()
+        }
+    }
+
+    /// Hands key focus back: re-ordering lets AppKit pick the previous key window.
+    private func releaseFocus() {
+        guard panel.acceptsKey else { return }
+        panel.acceptsKey = false
+        if panel.isKeyWindow {
+            panel.orderOut(nil)
+            panel.orderFrontRegardless()
         }
     }
 
@@ -181,14 +209,24 @@ final class NotchController {
                 self.send { $0.dismiss() }
             }
         }) { monitors.append(global) }
+        // ...including clicks in our own other windows (Settings).
+        if let local = NSEvent.addLocalMonitorForEvents(matching: clicks, handler: { [weak self] event in
+            if let self, event.window !== self.panel, self.interaction.isExpanded { self.send { $0.dismiss() } }
+            return event
+        }) { monitors.append(local) }
 
         // Escape closes; two-finger scrolls open/close and switch pages.
         if let local = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .scrollWheel], handler: { [weak self] event in
             guard let self else { return event }
             if event.type == .keyDown {
-                guard event.keyCode == 53, event.window === self.panel, self.interaction.isExpanded else { return event }
-                self.send { $0.dismiss() }
-                return nil
+                guard event.window === self.panel, self.interaction.isExpanded else { return event }
+                // Esc closes. Shortcuts were meant for the app the user was in:
+                // close and swallow them rather than run ours (e.g. Cmd-Q).
+                if event.keyCode == 53 || event.modifierFlags.contains(.command) {
+                    self.send { $0.dismiss() }
+                    return nil
+                }
+                return event
             }
             return self.scrolled(event) ? nil : event
         }) { monitors.append(local) }
@@ -215,7 +253,7 @@ final class NotchController {
         // Normalise so positive = fingers moving down / right, whatever the
         // natural-scrolling setting; wheels get a coarser step.
         let sign: Double = event.isDirectionInvertedFromDevice ? 1 : -1
-        let scale: Double = event.hasPreciseScrollingDeltas ? 1 : 10
+        let scale: Double = event.hasPreciseScrollingDeltas ? 1 : 30
         let expanded = interaction.isExpanded
         // Open pages may scroll vertically; there only the header band closes.
         let inHeader = NSEvent.mouseLocation.y >= panel.frame.maxY - ui.notchSize.height
@@ -231,7 +269,7 @@ final class NotchController {
             return true
         case .next, .previous:
             guard expanded else { return false }
-            withAnimation(Theme.emphasis) { ui.tab = ui.tab.next }
+            withAnimation(Theme.emphasis) { ui.tab = action == .next ? ui.tab.next : ui.tab.previous }
             return true
         }
     }

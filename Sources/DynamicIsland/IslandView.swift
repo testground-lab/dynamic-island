@@ -37,12 +37,12 @@ enum IslandMetrics {
 struct IslandView: View {
     let model: IslandModel
     let ui: IslandUIState
-    /// Click on the island body (opens a closed island, pins a hover-opened one).
+    /// Any click on the island; the controller decides what it means
+    /// (open, pin, or close when it lands on the camera area of the open header).
     var onTap: () -> Void
-    /// Click on the camera area of the open header (closes it).
-    var onCameraTap: () -> Void
     var openSettings: () -> Void
     var quit: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let expanded = ui.isExpanded
@@ -55,6 +55,7 @@ struct IslandView: View {
                             removal: .opacity.animation(.easeIn(duration: 0.12))))
                 } else {
                     CollapsedStrip(model: model, notchSize: ui.notchSize, emphasized: ui.presentation == .emphasized)
+                        .accessibilityAction { onTap() }
                         .transition(.asymmetric(
                             insertion: .opacity.animation(.easeOut(duration: 0.18).delay(0.12)),
                             removal: .opacity.animation(.easeIn(duration: 0.08))))
@@ -74,8 +75,8 @@ struct IslandView: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .animation(expanded ? Theme.open : Theme.close, value: expanded)
-        .animation(Theme.emphasis, value: ui.presentation == .emphasized)
+        .animation(reduceMotion ? .easeInOut(duration: 0.15) : expanded ? Theme.open : Theme.close, value: expanded)
+        .animation(reduceMotion ? nil : Theme.emphasis, value: ui.presentation == .emphasized)
         .environment(\.colorScheme, .dark)
     }
 
@@ -88,7 +89,6 @@ struct IslandView: View {
                              maxContentHeight: min(DashboardMetrics.contentBudget,
                                                    ui.panelHeight - ui.notchSize.height - 40),
                              scrollable: !ui.isSnapshot,
-                             onCameraTap: onCameraTap,
                              openSettings: openSettings)
             .padding(.horizontal, shoulder + IslandMetrics.contentInset)
             .padding(.bottom, IslandMetrics.bottomInset)

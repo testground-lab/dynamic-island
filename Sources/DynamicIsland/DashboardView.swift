@@ -4,13 +4,21 @@ import SwiftUI
 enum IslandTab: String, CaseIterable {
     case limits = "Limits", usage = "Usage"
 
-    var next: IslandTab { self == .limits ? .usage : .limits }
+    var next: IslandTab {
+        let all = Self.allCases
+        return all[(all.firstIndex(of: self)! + 1) % all.count]
+    }
+
+    var previous: IslandTab {
+        let all = Self.allCases
+        return all[(all.firstIndex(of: self)! + all.count - 1) % all.count]
+    }
 }
 
 enum DashboardMetrics {
     /// Content column of the open island (480 wide minus shoulders and insets).
     static let contentWidth: CGFloat = 424
-    static let spacing: CGFloat = 8
+    static let spacing: CGFloat = 6
     static let cardRadius: CGFloat = 14
     /// Pages scroll past this.
     static let contentBudget: CGFloat = 214
@@ -29,8 +37,6 @@ struct DashboardView: View {
     var maxContentHeight: CGFloat = DashboardMetrics.contentBudget
     /// Off for offscreen snapshots: ImageRenderer can't draw scroll views.
     var scrollable = true
-    /// Click on the camera area of the header (closes the island).
-    var onCameraTap: (() -> Void)?
     var openSettings: () -> Void
 
     var body: some View {
@@ -55,10 +61,7 @@ struct DashboardView: View {
                 Spacer(minLength: 0)
             }
             .frame(width: side, alignment: .leading)
-            Color.clear
-                .frame(width: cameraGap)
-                .contentShape(Rectangle())
-                .onTapGesture { onCameraTap?() }
+            Color.clear.frame(width: cameraGap)
             HStack(spacing: 4) {
                 Spacer(minLength: 0)
                 ConnectionDot(state: model.connection)
@@ -347,8 +350,8 @@ private struct ModelRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             Capsule()
                 .fill(.white.opacity(0.85))
-                .frame(width: max(3, 60 * share), height: 4)
-                .frame(width: 60, alignment: .leading)
+                .frame(width: max(3, 150 * share), height: 4)
+                .frame(width: 150, alignment: .leading)
             Text(Format.tokens(usage.totalTokens))
                 .font(Theme.number(10, .medium))
                 .frame(minWidth: 38, alignment: .trailing)

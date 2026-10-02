@@ -25,7 +25,7 @@ enum Snapshots {
             ui.tab = tab
             ui.isSnapshot = true
             let expanded = ui.isExpanded
-            let view = IslandView(model: model, ui: ui, onTap: {}, onCameraTap: {}, openSettings: {}, quit: {})
+            let view = IslandView(model: model, ui: ui, onTap: {}, openSettings: {}, quit: {})
                 .frame(width: IslandMetrics.panelSize.width, height: expanded ? 330 : 60)
                 .background(Color(white: 0.82)) // stand-in for a light desktop
             try write(view, to: directory.appendingPathComponent(name + ".png"))

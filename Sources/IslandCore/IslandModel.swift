@@ -131,8 +131,10 @@ import Observation
                 guard !Task.isCancelled else { throw CancellationError() }
                 drain = nil
             }
-            if let drain, drain.available {
-                if await store.ingest(drain.records) { reportsDirty = true }
+            if let drain, drain.available || !drain.records.isEmpty {
+                if await store.ingest(drain.records, trackingAvailable: drain.available) {
+                    reportsDirty = true
+                }
             }
             let response = try await client.authFiles()
             guard generation == current, !Task.isCancelled else { return false }

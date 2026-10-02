@@ -132,3 +132,27 @@ final class VolatileDefaults: UserDefaults, @unchecked Sendable {
   #expect(model.usageReports.values.allSatisfy { $0.trackingSince == now })
   #expect(model.usageReports.values.allSatisfy { $0.totals == .zero })
 }
+
+@MainActor @Test func modelIngestsFullBatchBeforeLate404WithoutStartingTracking() async {
+    let batchSize = 500
+    let record = "{\"model\":\"late-404\",\"tokens\":{\"input_tokens\":2,\"output_tokens\":3}}"
+    let batch = Data(("[" + Array(repeating: record, count: batchSize).joined(separator: ",") + "]").utf8)
+    let stub = StubTransport([
+        .response(200, batch), .response(404, Data()),
+        .response(200, Fixtures.data("auth-files")),
+    ])
+    let defaults = VolatileDefaults()
+    defaults.set(false, forKey: "liveQuotaEnabled")
+    let now = Fixtures.referenceNow
+    let model = IslandModel(
+        keyStore: InMemoryKeyStore(key: "test"), defaults: defaults,
+        store: UsageStore(url: nil, now: { now }),
+        clientFactory: { ManagementClient(baseURL: $0, key: $1, transport: stub) }, now: { now })
+    defer { model.stop() }
+    model.start()
+    await waitUntil { model.lastUpdated != nil }
+    #expect(!model.usageAvailable)
+    #expect(model.usageReports.values.allSatisfy { $0.totals.requests == batchSize })
+    #expect(model.usageReports.values.allSatisfy { $0.totals.totalTokens == batchSize * 5 })
+    #expect(model.usageReports.values.allSatisfy { $0.trackingSince == nil })
+}

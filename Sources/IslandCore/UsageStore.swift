@@ -214,7 +214,28 @@ public actor UsageStore {
     private var models: Set<String>
     private var lastPrunedAt: Date?
     private var dataVersion: Int
-    private var pending: [UsageRecord] = []
+    private struct BucketKey: Hashable {
+        let start: Int64
+        let authIndex: String
+        let model: String
+    }
+
+    private struct BucketAggregate {
+        var provider: String
+        var totals: UsageTotals
+
+        mutating func merge(_ other: Self) {
+            if !other.provider.isEmpty { provider = other.provider }
+            totals = UsageTotals(
+                requests: addingCounts(totals.requests, other.totals.requests),
+                failed: addingCounts(totals.failed, other.totals.failed),
+                inputTokens: addingCounts(totals.inputTokens, other.totals.inputTokens),
+                outputTokens: addingCounts(totals.outputTokens, other.totals.outputTokens),
+                totalTokens: addingCounts(totals.totalTokens, other.totals.totalTokens))
+        }
+    }
+
+    private var pending: [BucketKey: BucketAggregate] = [:]
     private var collectionBeganAt: Date?
 
     public init(
@@ -238,8 +259,9 @@ public actor UsageStore {
         var modelCache = Self.storedModels(database.handle, since: cutoff)
         self.collectionBeganAt = Self.trackingDate(database.handle)
         if !initialRecords.isEmpty {
+            let aggregates = Self.aggregated(initialRecords, now: current)
             let result = Self.attemptIngest(
-                initialRecords, database: database.handle, now: current,
+                aggregates, database: database.handle, now: current,
                 trackingSince: self.collectionBeganAt ?? current,
                 models: modelCache, prune: true,
                 expectedVersion: Self.currentDataVersion(database.handle))
@@ -247,7 +269,7 @@ public actor UsageStore {
                 modelCache = updated
                 self.lastPrunedAt = current
             } else {
-                self.pending = Array(Self.sanitized(initialRecords, now: current).suffix(5000))
+                self.pending = Self.bounded(aggregates)
                 self.collectionBeganAt = self.collectionBeganAt ?? current
             }
         }
@@ -270,11 +292,17 @@ public actor UsageStore {
     }
 
     /// Returns whether committed data changed, allowing the model to avoid unchanged report queries.
-    @discardableResult public func ingest(_ records: [UsageRecord]) -> Bool {
+    /// A partially drained, unavailable endpoint can supply records without starting tracking.
+    @discardableResult public func ingest(
+        _ records: [UsageRecord], trackingAvailable: Bool = true
+    ) -> Bool {
         let now = nowProvider()
         guard now.timeIntervalSince1970.isFinite else { return false }
-        collectionBeganAt = collectionBeganAt ?? now
-        let combined = pending + Self.sanitized(records, now: now)
+        if trackingAvailable { collectionBeganAt = collectionBeganAt ?? now }
+        var combined = pending
+        for (key, aggregate) in Self.aggregated(records, now: now) {
+            Self.merge(aggregate, into: &combined, at: key)
+        }
         let prune = lastPrunedAt.map { now.timeIntervalSince($0) >= 3600 } ?? true
         let version = Self.currentDataVersion(database.handle)
         let externalChange = version != dataVersion
@@ -285,18 +313,18 @@ public actor UsageStore {
         for attempt in 0..<2 {
             let result = Self.attemptIngest(
                 combined, database: database.handle, now: now,
-                trackingSince: collectionBeganAt ?? now,
+                trackingSince: collectionBeganAt,
                 models: modelCache, prune: prune, expectedVersion: version)
             switch result {
             case .committed(let changed, let updated):
-                pending = []
+                pending = [:]
                 models = updated
                 dataVersion = Self.currentDataVersion(database.handle)
                 if prune { lastPrunedAt = now }
                 return changed || externalChange
             case .failed(let status):
                 if status & 0xff == SQLITE_BUSY, attempt == 0 { continue }
-                pending = Array(combined.suffix(5000))
+                pending = Self.bounded(combined)
                 return externalChange
             }
         }
@@ -321,9 +349,89 @@ public actor UsageStore {
         }
     }
 
+    private static func merge(
+        _ aggregate: BucketAggregate, into buckets: inout [BucketKey: BucketAggregate],
+        at key: BucketKey
+    ) {
+        if var existing = buckets[key] {
+            existing.merge(aggregate)
+            buckets[key] = existing
+        } else {
+            buckets[key] = aggregate
+        }
+    }
+
+    private static func aggregated(_ records: [UsageRecord], now: Date)
+        -> [BucketKey: BucketAggregate]
+    {
+        var buckets: [BucketKey: BucketAggregate] = [:]
+        for record in sanitized(records, now: now) {
+            guard let timestamp = record.timestamp, let start = bucketStart(timestamp) else {
+                continue
+            }
+            let input = nonnegative(record.tokens?.inputTokens)
+            let output = nonnegative(record.tokens?.outputTokens)
+            let supplied = nonnegative(record.tokens?.totalTokens)
+            let total = supplied > 0 ? supplied : addingCounts(
+                addingCounts(input, output), nonnegative(record.tokens?.reasoningTokens))
+            merge(
+                BucketAggregate(
+                    provider: record.provider ?? "",
+                    totals: UsageTotals(
+                        requests: 1, failed: record.failed == true ? 1 : 0,
+                        inputTokens: input, outputTokens: output, totalTokens: total)),
+                into: &buckets,
+                at: BucketKey(
+                    start: start, authIndex: record.authIndex ?? "", model: record.model ?? "unknown"))
+        }
+        return buckets
+    }
+
+    /// Sacrifice oldest model detail, never counters, when an outage spans too many keys.
+    private static func bounded(_ aggregates: [BucketKey: BucketAggregate])
+        -> [BucketKey: BucketAggregate]
+    {
+        let limit = 50_000
+        guard aggregates.count > limit else { return aggregates }
+        var buckets = aggregates
+        let oldestFirst = aggregates.keys.sorted {
+            if $0.start != $1.start { return $0.start < $1.start }
+            if $0.authIndex != $1.authIndex { return $0.authIndex < $1.authIndex }
+            return $0.model < $1.model
+        }
+        for key in oldestFirst where buckets.count > limit {
+            guard key.model != "other", let aggregate = buckets.removeValue(forKey: key) else {
+                continue
+            }
+            merge(aggregate, into: &buckets,
+                  at: BucketKey(start: key.start, authIndex: key.authIndex, model: "other"))
+        }
+        // Single-model buckets cannot shrink further by model alone. Roll their oldest
+        // time detail together per account; extreme account cardinality uses unattributed.
+        let oldestStart = oldestFirst[0].start
+        for key in oldestFirst where buckets.count > limit {
+            let folded = BucketKey(start: key.start, authIndex: key.authIndex, model: "other")
+            guard let aggregate = buckets.removeValue(forKey: folded) else { continue }
+            merge(aggregate, into: &buckets,
+                  at: BucketKey(start: oldestStart, authIndex: key.authIndex, model: "other"))
+        }
+        if buckets.count > limit {
+            let overflow = BucketKey(start: oldestStart, authIndex: "", model: "other")
+            for key in oldestFirst where buckets.count > limit {
+                let folded = BucketKey(start: oldestStart, authIndex: key.authIndex, model: "other")
+                guard folded != overflow, var aggregate = buckets.removeValue(forKey: folded) else {
+                    continue
+                }
+                aggregate.provider = ""
+                merge(aggregate, into: &buckets, at: overflow)
+            }
+        }
+        return buckets
+    }
+
     private static func attemptIngest(
-        _ records: [UsageRecord], database: OpaquePointer?, now: Date,
-        trackingSince: Date, models: Set<String>, prune: Bool, expectedVersion: Int
+        _ aggregates: [BucketKey: BucketAggregate], database: OpaquePointer?, now: Date,
+        trackingSince: Date?, models: Set<String>, prune: Bool, expectedVersion: Int
     ) -> IngestResult {
         guard let database else { return .failed(SQLITE_CANTOPEN) }
         guard UsageDatabase.execute(database, "BEGIN IMMEDIATE") else {
@@ -331,13 +439,15 @@ public actor UsageStore {
         }
         var committed = false
         defer { if !committed { _ = UsageDatabase.execute(database, "ROLLBACK") } }
-        guard
-            UsageDatabase.execute(
+        var changed = false
+        if let trackingSince {
+            guard UsageDatabase.execute(
                 database,
                 "INSERT OR IGNORE INTO meta(key, value) VALUES ('tracking_since', ?)",
                 [.real(trackingSince.timeIntervalSince1970)])
-        else { return .failed(sqlite3_errcode(database)) }
-        var changed = sqlite3_changes(database) > 0
+            else { return .failed(sqlite3_errcode(database)) }
+            changed = sqlite3_changes(database) > 0
+        }
         var modelCache = models
         let externalChange = currentDataVersion(database) != expectedVersion
         if !prune, externalChange, let oldest = bucketStart(now.addingTimeInterval(-31 * 86400)) {
@@ -369,30 +479,20 @@ public actor UsageStore {
                     total = CASE WHEN total > 9223372036854775807 - excluded.total THEN 9223372036854775807 ELSE total + excluded.total END
                 """)
         else { return .failed(sqlite3_errcode(database)) }
-        for record in sanitized(records, now: now) {
-            guard let timestamp = record.timestamp, let start = bucketStart(timestamp) else {
-                continue
-            }
-            var model = record.model ?? "unknown"
+        for (key, aggregate) in aggregates {
+            var model = key.model
             if !modelCache.contains(model),
                 modelCache.count >= (modelCache.contains("other") ? 200 : 199)
             {
                 model = "other"
             }
             modelCache.insert(model)
-            let input = nonnegative(record.tokens?.inputTokens)
-            let output = nonnegative(record.tokens?.outputTokens)
-            let supplied = nonnegative(record.tokens?.totalTokens)
-            let total =
-                supplied > 0
-                ? supplied
-                : addingCounts(
-                    addingCounts(input, output), nonnegative(record.tokens?.reasoningTokens))
+            let totals = aggregate.totals
             let values: [SQLValue] = [
-                .integer(start), .text(record.authIndex ?? ""), .text(record.provider ?? ""),
-                .text(model),
-                .integer(1), .integer(record.failed == true ? 1 : 0), .integer(Int64(input)),
-                .integer(Int64(output)), .integer(Int64(total)),
+                .integer(key.start), .text(key.authIndex), .text(aggregate.provider), .text(model),
+                .integer(Int64(totals.requests)), .integer(Int64(totals.failed)),
+                .integer(Int64(totals.inputTokens)), .integer(Int64(totals.outputTokens)),
+                .integer(Int64(totals.totalTokens)),
             ]
             guard upsert.bind(values), upsert.run() else {
                 return .failed(sqlite3_errcode(database))
@@ -500,7 +600,7 @@ public actor UsageStore {
             UsageDatabase.execute(database.handle, "COMMIT")
         {
             models = []
-            pending = []
+            pending = [:]
             lastPrunedAt = nil
             collectionBeganAt = nil
             dataVersion = Self.currentDataVersion(database.handle)

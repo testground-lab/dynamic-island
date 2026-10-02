@@ -545,3 +545,72 @@ func todayIncludesMidnightBucketButNotPreviousMinute(_ zone: String, _ edge: Str
   #expect(unattributed?.label == "Unattributed")
   #expect(unattributed?.provider.isUnknown == true)
 }
+
+@Test func pendingAggregatesPreserveMoreThanFiveThousandRecordsAcrossFailures() async throws {
+    let url = try databaseURL()
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let store = UsageStore(url: url, calendar: utc(), now: { reference })
+    let connection = try StoreTestConnection(url)
+    try connection.execute("BEGIN IMMEDIATE")
+    #expect(await store.ingest(Array(repeating: sample("first", failed: true), count: 3_100)) == false)
+    #expect(await store.ingest(Array(repeating: sample("second", total: 7), count: 3_200)) == false)
+    #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets") == 0)
+    try connection.execute("ROLLBACK")
+    #expect(await store.ingest([]))
+    let report = await store.report(.today, accounts: [], now: reference)
+    #expect(report.totals == UsageTotals(
+        requests: 6_300, failed: 3_100, inputTokens: 63_000,
+        outputTokens: 126_000, totalTokens: 3_100 * 35 + 3_200 * 7))
+    #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets") == 2)
+    #expect(await store.ingest([]) == false)
+    #expect(await store.report(.today, accounts: [], now: reference) == report)
+}
+
+@Test(arguments: [false, true])
+func pendingOverflowFoldsOldestKeysWithoutLosingCounters(uniqueAccounts: Bool) async throws {
+    let url = try databaseURL()
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let store = UsageStore(url: url, calendar: utc(), now: { reference })
+    let connection = try StoreTestConnection(url)
+    try connection.execute("BEGIN IMMEDIATE")
+    let records = (0..<50_200).map { index in
+        sample(
+            "model-\(index % 200)",
+            at: reference.addingTimeInterval(index < 200 ? -900 : 0),
+            index: uniqueAccounts ? "account-\(index)" : String(format: "account-%03d", index / 200),
+            failed: true, total: 7)
+    }
+    #expect(await store.ingest(records) == false)
+    try connection.execute("ROLLBACK")
+    #expect(await store.ingest([]))
+    let report = await store.report(.today, accounts: [], now: reference)
+    #expect(report.totals == UsageTotals(
+        requests: 50_200, failed: 50_200, inputTokens: 502_000,
+        outputTokens: 1_004_000, totalTokens: 351_400))
+    #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets") <= 50_000)
+    let oldest = Int64(floor(reference.addingTimeInterval(-900).timeIntervalSince1970 / 900) * 900)
+    #expect(try sqliteInteger(url, sql: "SELECT SUM(requests) FROM buckets WHERE start = \(oldest) AND model = 'other'") >= 200)
+    #expect(await store.ingest([]) == false)
+    #expect(await store.report(.today, accounts: [], now: reference) == report)
+}
+
+@Test func failedInitialIngestRetainsAllAggregatedRecords() async throws {
+    let url = try databaseURL()
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let seed = UsageStore(url: url, calendar: utc(), now: { reference })
+    await seed.ingest([])
+    let connection = try StoreTestConnection(url)
+    try connection.execute(
+        "CREATE TRIGGER reject_initial BEFORE INSERT ON buckets BEGIN SELECT RAISE(ABORT, 'test failure'); END")
+    let store = UsageStore(
+        url: url, calendar: utc(), now: { reference },
+        initialRecords: Array(repeating: sample(total: 7), count: 6_100))
+    #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets") == 0)
+    try connection.execute("DROP TRIGGER reject_initial")
+    #expect(await store.ingest([]))
+    let report = await store.report(.today, accounts: [], now: reference)
+    #expect(report.totals.requests == 6_100)
+    #expect(report.totals.totalTokens == 42_700)
+    #expect(await store.ingest([]) == false)
+    #expect(await store.report(.today, accounts: [], now: reference) == report)
+}

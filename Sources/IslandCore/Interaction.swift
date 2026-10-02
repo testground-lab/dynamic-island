@@ -158,7 +158,7 @@ public struct ScrollGestureRecognizer: Equatable, Sendable {
     /// Vertical permission belongs to the stroke's first event, not later pointer movement.
     public mutating func feed(
         pull: Double, sideways: Double, time: TimeInterval, phase: ScrollPhase,
-        precise: Bool, expanded: Bool, verticalAllowed: Bool
+        expanded: Bool, verticalAllowed: Bool
     ) -> ScrollGestureAction? {
         guard pull.isFinite, sideways.isFinite, time.isFinite else { return nil }
 

@@ -154,7 +154,7 @@ extension ScrollGestureRecognizer {
         expanded: Bool = false, verticalAllowed: Bool = true
     ) -> ScrollGestureAction? {
         feed(
-            pull: pull, sideways: sideways, time: time, phase: phase, precise: precise,
+            pull: pull, sideways: sideways, time: time, phase: phase,
             expanded: expanded, verticalAllowed: verticalAllowed)
     }
 }

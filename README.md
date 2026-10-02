@@ -14,8 +14,8 @@ swift run DynamicIsland --snapshot /tmp/shots   # render demo PNGs and exit
 scripts/bundle.sh                  # build/DynamicIsland.app (needed for launch at login)
 ```
 
-Click the notch (or swipe down on it with two fingers) to open; click elsewhere, press Esc or swipe up to close.
-Swipe sideways to switch between Limits and Usage. "Open on hover" is available in Settings.
+Click the notch (or swipe down on it with two fingers) to open; click elsewhere, press Esc or swipe up on its top row to close.
+Inside, Limits and Usage share one page; scroll to see more. "Open on hover" is available in Settings.
 
 ## Data
 

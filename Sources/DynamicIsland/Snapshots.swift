@@ -26,7 +26,7 @@ enum Snapshots {
             ui.presentation = presentation
             ui.usageRange = range
             ui.isSnapshot = true
-            ui.maxContentHeight = offset > 0 ? 420 : maxContent
+            ui.maxContentHeight = maxContent
             ui.panelHeight = notch.height + ui.maxContentHeight + 80
             ui.snapshotOffset = offset
             let expanded = ui.isExpanded
@@ -44,7 +44,7 @@ enum Snapshots {
                           to: directory.appendingPathComponent(name + ".png"))
             }
         }
-        try write(PopoverDashboard(model: model, snapshotOffset: 0, openSettings: {}, range: .today),
+        try write(PopoverDashboard(model: model, layout: PopoverLayout(), snapshotOffset: 0, openSettings: {}, range: .today),
                   to: directory.appendingPathComponent("menubar-popover.png"))
     }
 

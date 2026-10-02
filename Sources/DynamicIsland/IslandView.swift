@@ -30,8 +30,9 @@ enum IslandMetrics {
     static let bottomInset: CGFloat = 14
     /// Hover "pulse": growth per side and downward.
     static let emphasisGrowth = CGSize(width: 10, height: 5)
-    /// Big enough for the open island plus its spring overshoot; the rest of
-    /// the panel is transparent and click-through.
+    /// Default panel size. The real height is set per screen in
+    /// `NotchController.place(on:)` (page cap + header + room for the spring
+    /// overshoot); the rest of the panel is transparent and click-through.
     static let panelSize = CGSize(width: expandedWidth + 64, height: 420)
 }
 
@@ -83,7 +84,7 @@ struct IslandView: View {
         return DashboardView(model: model, range: $ui.usageRange,
                              headerHeight: ui.notchSize.height,
                              cameraGap: ui.notchSize.width,
-                             maxContentHeight: min(ui.maxContentHeight, ui.panelHeight - ui.notchSize.height - 40),
+                             maxContentHeight: ui.maxContentHeight,
                              snapshotOffset: ui.isSnapshot ? (ui.snapshotOffset ?? 0) : nil,
                              openSettings: openSettings)
             .padding(.horizontal, shoulder + IslandMetrics.contentInset)

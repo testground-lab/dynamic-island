@@ -217,7 +217,7 @@ final class NotchController {
             return event
         }) { monitors.append(local) }
 
-        // Escape closes; two-finger scrolls open/close and switch pages.
+        // Escape closes; a two-finger swipe down opens, up on the header row closes.
         if let local = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .scrollWheel], handler: { [weak self] event in
             guard let self else { return event }
             if event.type == .keyDown {
@@ -263,7 +263,6 @@ final class NotchController {
         let action = gesture.feed(pull: Double(event.scrollingDeltaY) * sign * scale,
                                   sideways: Double(event.scrollingDeltaX) * sign * scale,
                                   time: event.timestamp, phase: phase,
-                                  precise: event.hasPreciseScrollingDeltas,
                                   expanded: expanded, verticalAllowed: !expanded || inHeader)
         guard let action else { return !expanded } // nothing else scrolls on the closed island
         send { $0.gesture(action) }

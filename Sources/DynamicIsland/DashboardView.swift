@@ -28,8 +28,8 @@ struct DashboardView: View {
     var snapshotOffset: CGFloat?
     var openSettings: () -> Void
 
-    @State private var contentHeight: CGFloat = 0
     @State private var moreBelow = false
+    @State private var moreAbove = false
 
     var body: some View {
         VStack(spacing: DashboardMetrics.spacing) {
@@ -47,6 +47,7 @@ struct DashboardView: View {
         return HStack(spacing: 0) {
             Text("AI usage")
                 .font(.system(size: 13, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
                 .frame(width: side, alignment: .leading)
             Color.clear.frame(width: cameraGap)
             HStack(spacing: 4) {
@@ -71,20 +72,24 @@ struct DashboardView: View {
                 SnapshotClip(offset: snapshotOffset, maxHeight: maxContentHeight) { content }
                     .clipped()
             } else {
-                ScrollView(.vertical) {
-                    content
-                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+                // Hug the content and scroll only past the cap. Sized in layout
+                // (not from a measured @State) so the island's open spring and
+                // height changes animate in one pass, without a first-frame jump.
+                ScrollCap(maxHeight: maxContentHeight) {
+                    ScrollView(.vertical) { content }
+                        .scrollIndicators(.never)
+                        .scrollBounceBehavior(.basedOnSize)
+                        .onScrollGeometryChange(for: EdgeState.self) { geo in
+                            EdgeState(above: geo.contentOffset.y > 2,
+                                      below: geo.contentOffset.y + geo.containerSize.height < geo.contentSize.height - 2)
+                        } action: { _, edges in
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                moreAbove = edges.above
+                                moreBelow = edges.below
+                            }
+                        }
+                        .mask(EdgeFade(top: moreAbove, bottom: moreBelow))
                 }
-                .scrollIndicators(.never)
-                .scrollBounceBehavior(.basedOnSize)
-                // Hug the content; scroll only past the cap.
-                .frame(height: min(max(contentHeight, 1), maxContentHeight))
-                .onScrollGeometryChange(for: Bool.self) { geo in
-                    geo.contentOffset.y + geo.containerSize.height < geo.contentSize.height - 2
-                } action: { _, more in
-                    withAnimation(.easeOut(duration: 0.15)) { moreBelow = more }
-                }
-                .mask(BottomFade(active: moreBelow))
             }
         }
     }
@@ -103,12 +108,12 @@ struct DashboardView: View {
                 SectionHeader(title: "Limits") {
                     Text(active == 1 ? "1 account" : "\(active) accounts")
                         .font(.system(size: 9.5))
-                        .foregroundStyle(Theme.tertiary)
+                        .foregroundStyle(Theme.secondary)
                 }
                 LimitsPage(accounts: model.accounts, now: now)
                 SectionHeader(title: "Usage") { RangePicker(range: $range) }
                     .padding(.top, 4)
-                UsagePage(reports: model.usageReports, available: model.usageAvailable, range: $range)
+                UsagePage(reports: model.usageReports, available: model.usageAvailable, range: range)
             }
         }
     }
@@ -133,16 +138,39 @@ private struct SnapshotClip: Layout {
     }
 }
 
-/// Fades the last few points of the page when more content is below.
-private struct BottomFade: View {
-    var active: Bool
+private struct EdgeState: Equatable {
+    var above: Bool
+    var below: Bool
+}
+
+/// Fades the page's edges where more content is scrolled out of view.
+private struct EdgeFade: View {
+    var top: Bool
+    var bottom: Bool
 
     var body: some View {
         VStack(spacing: 0) {
+            LinearGradient(colors: [.black.opacity(top ? 0 : 1), .black], startPoint: .top, endPoint: .bottom)
+                .frame(height: 14)
             Color.black
-            LinearGradient(colors: [.black, .black.opacity(active ? 0 : 1)], startPoint: .top, endPoint: .bottom)
+            LinearGradient(colors: [.black, .black.opacity(bottom ? 0 : 1)], startPoint: .top, endPoint: .bottom)
                 .frame(height: 22)
         }
+    }
+}
+
+/// Sizes a vertical ScrollView to its content's height, capped at `maxHeight`.
+private struct ScrollCap: Layout {
+    var maxHeight: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let child = subviews.first else { return .zero }
+        let ideal = child.sizeThatFits(.init(width: proposal.width, height: nil))
+        return CGSize(width: proposal.width ?? ideal.width, height: min(ideal.height, maxHeight))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, anchor: .topLeading, proposal: .init(bounds.size))
     }
 }
 
@@ -155,11 +183,12 @@ private struct SectionHeader<Trailing: View>: View {
             Text(title.uppercased())
                 .font(.system(size: 9.5, weight: .bold))
                 .tracking(0.6)
-                .foregroundStyle(Theme.tertiary)
+                .foregroundStyle(Theme.secondary)
+                .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 4)
             trailing
         }
-        .frame(height: 18)
+        .frame(minHeight: 20)
         .padding(.horizontal, 2)
     }
 }
@@ -296,7 +325,7 @@ struct AccountCard: View {
 private struct UsagePage: View {
     var reports: [UsageRange: UsageReport]
     var available: Bool
-    @Binding var range: UsageRange
+    var range: UsageRange
 
     var body: some View {
         let report = reports[range]

@@ -61,7 +61,7 @@ struct SettingsView: View {
                 Toggle("Open the island on hover", isOn: $openOnHover)
                 Text(openOnHover
                      ? "Opens after resting on the notch for a moment and closes when the pointer leaves. A click keeps it open."
-                     : "Click the notch, or swipe down on it with two fingers, to open. Click elsewhere, press Esc or swipe up to close.")
+                     : "Click the notch, or swipe down on it with two fingers, to open. Click elsewhere, press Esc or swipe up on its top row to close.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Toggle("Fetch live quota from Claude / Codex every 5 min", isOn: $model.liveQuotaEnabled)

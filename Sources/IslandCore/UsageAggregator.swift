@@ -23,13 +23,15 @@ public actor UsageAggregator {
 
     private var buckets: [BucketKey: Bucket] = [:]
     private var trackingSince: Date?
+    nonisolated let initialSummary: UsageSummary
     private let persistenceURL: URL?
     private let calendar: Calendar
     private let nowProvider: @Sendable () -> Date
 
     public init(
         persistenceURL: URL?, calendar: Calendar = .current,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        initialRecords: [UsageRecord] = []
     ) {
         self.persistenceURL = persistenceURL
         self.calendar = calendar
@@ -56,12 +58,27 @@ public actor UsageAggregator {
                 buckets[key] = Self.merge(buckets[key], bucket)
             }
         }
+        let current = now()
+        if !initialRecords.isEmpty {
+            Self.accumulate(
+                initialRecords, now: current, buckets: &buckets, trackingSince: &trackingSince)
+        }
+        initialSummary = Self.makeSummary(
+            buckets: buckets, trackingSince: trackingSince, calendar: calendar, now: current)
     }
 
     public func ingest(_ records: [UsageRecord]) {
         let now = nowProvider()
         let previousBuckets = buckets
         let previousTrackingSince = trackingSince
+        Self.accumulate(records, now: now, buckets: &buckets, trackingSince: &trackingSince)
+        if previousBuckets != buckets || previousTrackingSince != trackingSince { persist() }
+    }
+
+    private static func accumulate(
+        _ records: [UsageRecord], now: Date,
+        buckets: inout [BucketKey: Bucket], trackingSince: inout Date?
+    ) {
         if trackingSince == nil { trackingSince = now }
         let oldestMinute = floor((now.timeIntervalSince1970 - 48 * 3600) / 60) * 60
         buckets = buckets.filter { Double($0.key.minute) >= oldestMinute }
@@ -89,7 +106,6 @@ public actor UsageAggregator {
             )
             buckets[key] = Self.merge(buckets[key], addition)
         }
-        if previousBuckets != buckets || previousTrackingSince != trackingSince { persist() }
     }
 
     private static func boundedMinute(_ date: Date, now: Date) -> Int? {
@@ -117,17 +133,26 @@ public actor UsageAggregator {
     }
 
     public func summary(now: Date) -> UsageSummary {
+        Self.makeSummary(
+            buckets: buckets, trackingSince: trackingSince, calendar: calendar, now: now)
+    }
+
+    private static func makeSummary(
+        buckets: [BucketKey: Bucket], trackingSince: Date?, calendar: Calendar, now: Date
+    ) -> UsageSummary {
         let hour = now.timeIntervalSince1970 - 3600
         let today = calendar.startOfDay(for: now).timeIntervalSince1970
         let end = now.timeIntervalSince1970
         return UsageSummary(
-            lastHour: summarize { Double($0.minute) > hour && Double($0.minute) <= end },
-            today: summarize { Double($0.minute) >= today && Double($0.minute) <= end },
+            lastHour: summarize(buckets) { Double($0.minute) > hour && Double($0.minute) <= end },
+            today: summarize(buckets) { Double($0.minute) >= today && Double($0.minute) <= end },
             trackingSince: trackingSince
         )
     }
 
-    private func summarize(_ include: (Bucket) -> Bool) -> [ModelUsage] {
+    private static func summarize(_ buckets: [BucketKey: Bucket], _ include: (Bucket) -> Bool)
+        -> [ModelUsage]
+    {
         var result: [String: ModelUsage] = [:]
         for bucket in buckets.values where include(bucket) {
             var model =

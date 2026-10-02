@@ -7,6 +7,7 @@ public enum ManagementError: Error, Equatable, Sendable {
     case decoding(String)
     case invalidBaseURL
     case responseTooLarge
+    case tls
 }
 
 public protocol HTTPTransport: Sendable {
@@ -101,12 +102,6 @@ public struct ManagementClient: Sendable {
         return try decode(APICallResponse.self, data: await send(path: "api-call", body: body))
     }
 
-    public func drainUsageQueue(batchSize: Int = 500, maxBatches: Int = 10) async throws
-        -> [UsageRecord]
-    {
-        try await drainUsageQueueResult(batchSize: batchSize, maxBatches: maxBatches).records
-    }
-
     /// Carries endpoint availability separately from a genuinely empty queue.
     public func drainUsageQueueResult(batchSize: Int = 500, maxBatches: Int = 10) async throws
         -> UsageDrainResult
@@ -172,6 +167,10 @@ public struct ManagementClient: Sendable {
         } catch let error as URLError {
             if error.code == .cancelled { throw CancellationError() }
             switch error.code {
+            case .secureConnectionFailed, .serverCertificateHasBadDate, .serverCertificateUntrusted,
+                .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid,
+                .clientCertificateRejected, .clientCertificateRequired:
+                throw ManagementError.tls
             case .cannotConnectToHost, .timedOut, .networkConnectionLost, .notConnectedToInternet,
                 .cannotFindHost:
                 // Localized errors may contain URLs or reflected credentials.

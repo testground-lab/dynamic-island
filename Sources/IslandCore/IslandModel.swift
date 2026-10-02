@@ -18,6 +18,7 @@ import Observation
     @ObservationIgnored private let keyStore: any KeyStore
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let aggregator: UsageAggregator
+    @ObservationIgnored private let nowProvider: @Sendable () -> Date
     @ObservationIgnored private let clientFactory: @Sendable (URL, String) -> ManagementClient
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var liveTask: Task<Void, Never>?
@@ -31,12 +32,14 @@ import Observation
         keyStore: any KeyStore, defaults: UserDefaults = .standard, aggregator: UsageAggregator,
         clientFactory: @escaping @Sendable (URL, String) -> ManagementClient = {
             ManagementClient(baseURL: $0, key: $1)
-        }
+        },
+        now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.keyStore = keyStore
         self.defaults = defaults
         self.aggregator = aggregator
         self.clientFactory = clientFactory
+        self.nowProvider = now
         baseURLString = defaults.string(forKey: "baseURL") ?? BaseURLValidator.defaultBaseURL
         liveQuotaEnabled =
             defaults.object(forKey: "liveQuotaEnabled") == nil
@@ -74,6 +77,7 @@ import Observation
     public func saveKey(_ key: String) throws {
         try keyStore.save(key)
         hasKey = true
+        connection = .connecting
         live = [:]
         liveAttempts = [:]
         refreshNow()
@@ -92,6 +96,7 @@ import Observation
     public func applyBaseURL(_ string: String) -> Bool {
         guard let url = BaseURLValidator.validate(string) else { return false }
         baseURLString = url.absoluteString
+        connection = .connecting
         defaults.set(baseURLString, forKey: "baseURL")
         live = [:]
         liveAttempts = [:]
@@ -127,19 +132,29 @@ import Observation
             hasKey = true
             let client = clientFactory(url, key)
             // Drain first: its short-lived queue must not wait for slow live quota calls.
-            let drain = try await client.drainUsageQueueResult()
-            await aggregator.ingest(drain.records)
+            let drain: UsageDrainResult?
+            do {
+                drain = try await client.drainUsageQueueResult()
+                if let drain { await aggregator.ingest(drain.records) }
+            } catch ManagementError.unauthorized {
+                throw ManagementError.unauthorized
+            } catch {
+                guard !Task.isCancelled else { throw CancellationError() }
+                drain = nil
+            }
             let response = try await client.authFiles()
             guard generation == current, !Task.isCancelled else { return false }
-            let now = Date()
+            let now = nowProvider()
             lastResponse = response
             pruneLive(for: response.files)
             accounts = AccountMapper.accounts(
                 from: response, live: liveQuotaEnabled ? live : [:], now: now)
-            let summary = await aggregator.summary(now: now)
-            guard generation == current, !Task.isCancelled else { return false }
-            usage = summary
-            usageAvailable = drain.available
+            if let drain {
+                let summary = await aggregator.summary(now: now)
+                guard generation == current, !Task.isCancelled else { return false }
+                usage = summary
+                usageAvailable = drain.available
+            }
             lastUpdated = now
             connection = .connected(at: now)
             if liveQuotaEnabled && liveTask == nil {
@@ -160,6 +175,7 @@ import Observation
             case .decoding: connection = .failed("Invalid management response")
             case .invalidBaseURL: connection = .failed("Invalid gateway URL")
             case .responseTooLarge: connection = .failed("Management response too large")
+            case .tls: connection = .failed("TLS error")
             case nil: connection = .failed("Unable to read management key")
             }
             return true
@@ -206,10 +222,10 @@ import Observation
         let indexes = Set(currentFiles.compactMap(\.authIndex))
         pruneLive(for: currentFiles)
         for (index, quota) in results where indexes.contains(index) {
-            live[index] = quota
+            if let quota { live[index] = quota }
         }
         if liveQuotaEnabled, let response = lastResponse {
-            accounts = AccountMapper.accounts(from: response, live: live, now: Date())
+            accounts = AccountMapper.accounts(from: response, live: live, now: nowProvider())
         }
     }
     private func pruneLive(for files: [AuthFile]) {
@@ -221,12 +237,16 @@ import Observation
     public static func demo() -> IslandModel {
         // Dedicated volatile defaults and in-memory key store: no credentials or network.
         let defaults = UserDefaults(suiteName: "dev.ksotis.dynamic-island.demo") ?? .standard
-        let model = IslandModel(
-            keyStore: InMemoryKeyStore(), defaults: defaults,
-            aggregator: UsageAggregator(persistenceURL: nil))
-        model.isDemo = true
         let now = Date()
         let reference = Fixtures.referenceNow
+        let records =
+            (try? JSONDecoder().decode(
+                UsageQueueBatch.self, from: Fixtures.data("usage-queue")))?.records ?? []
+        let aggregator = UsageAggregator(
+            persistenceURL: nil, now: { reference }, initialRecords: records)
+        let model = IslandModel(
+            keyStore: InMemoryKeyStore(), defaults: defaults, aggregator: aggregator)
+        model.isDemo = true
         let shift = now.timeIntervalSince(reference)
         if let response = try? JSONDecoder().decode(
             AuthFilesResponse.self, from: Fixtures.data("auth-files"))
@@ -250,31 +270,8 @@ import Observation
                 return a
             }
         }
-        if let batch = try? JSONDecoder().decode(
-            UsageQueueBatch.self, from: Fixtures.data("usage-queue"))
-        {
-            func totals(_ records: [UsageRecord]) -> [ModelUsage] {
-                Dictionary(grouping: records, by: { $0.model ?? $0.alias ?? "unknown" }).map {
-                    name, records in
-                    ModelUsage(
-                        model: name, requests: records.count,
-                        failed: records.filter { $0.failed == true }.count,
-                        inputTokens: records.reduce(0) { $0 + nonnegative($1.tokens?.inputTokens) },
-                        outputTokens: records.reduce(0) {
-                            $0 + nonnegative($1.tokens?.outputTokens)
-                        },
-                        totalTokens: records.reduce(0) { $0 + nonnegative($1.tokens?.totalTokens) })
-                }.sorted {
-                    $0.totalTokens == $1.totalTokens
-                        ? $0.model < $1.model : $0.totalTokens > $1.totalTokens
-                }
-            }
-            model.usage = UsageSummary(
-                lastHour: totals(
-                    batch.records.filter {
-                        ($0.timestamp ?? reference) > reference.addingTimeInterval(-3600)
-                    }), today: totals(batch.records), trackingSince: now.addingTimeInterval(-7200))
-        }
+        model.usage = aggregator.initialSummary
+        model.usage.trackingSince = model.usage.trackingSince?.addingTimeInterval(shift)
         model.connection = .connected(at: now)
         model.lastUpdated = now
         return model

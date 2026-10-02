@@ -78,7 +78,7 @@ final class VolatileDefaults: UserDefaults, @unchecked Sendable {
     model.stop()
 }
 @MainActor @Test func modelURLPreferencesAndErrors() async {
-    let stub = StubTransport([.failure(.cannotConnectToHost)])
+    let stub = StubTransport([.failure(.cannotConnectToHost), .failure(.cannotConnectToHost)])
     let defaults = VolatileDefaults()
     defaults.set(false, forKey: "liveQuotaEnabled")
     let model = IslandModel(

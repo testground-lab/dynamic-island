@@ -1,27 +1,6 @@
 import IslandCore
 import SwiftUI
 
-/// Ring that drains as quota is used: the arc is what's *left*.
-struct QuotaRing: View {
-    var window: QuotaWindow?
-    var tint: Color
-    var lineWidth: CGFloat = 3
-
-    var body: some View {
-        let remaining = window?.remainingFraction ?? 0
-        ZStack {
-            Circle().stroke(Theme.track, lineWidth: lineWidth)
-            Circle()
-                .trim(from: 0, to: remaining)
-                .stroke(window?.tint(base: tint) ?? Theme.tertiary,
-                        style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-        }
-        .animation(Theme.spring, value: remaining)
-        .accessibilityHidden(true)
-    }
-}
-
 /// One limit window, dense: label, countdown to reset, % left, then a thin
 /// meter with a tick for how much of the window has elapsed (being left of
 /// the tick means quota is being used faster than time passes).

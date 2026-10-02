@@ -52,7 +52,7 @@ struct IslandView: View {
                             insertion: .opacity.animation(.easeOut(duration: 0.2).delay(0.1)),
                             removal: .opacity.animation(.easeIn(duration: 0.12))))
                 } else {
-                    IdleNotch(notchSize: ui.notchSize, emphasized: ui.presentation == .emphasized)
+                    IdleNotch(problem: model.connection.problem?.title, notchSize: ui.notchSize, emphasized: ui.presentation == .emphasized)
                         .accessibilityAction { onTap() }
                 }
             }
@@ -95,6 +95,7 @@ struct IslandView: View {
 /// invisible. Hovering nudges it a little wider and taller (the cue that it
 /// can be clicked open); it shows no live data.
 struct IdleNotch: View {
+    var problem: String? = nil
     var notchSize: CGSize
     var emphasized: Bool
 
@@ -105,6 +106,7 @@ struct IdleNotch: View {
             .accessibilityElement()
             .accessibilityLabel("CLIProxy dashboard")
             .accessibilityAddTraits(.isButton)
+            .accessibilityValue(problem ?? "")
             .accessibilityHint("Opens quota and usage")
     }
 }

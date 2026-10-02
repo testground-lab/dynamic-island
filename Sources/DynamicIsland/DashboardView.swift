@@ -331,7 +331,7 @@ private struct UsagePage: View {
 
     private func partialNote(_ report: UsageReport) -> some View {
         let since = report.trackingSince.map { $0.formatted(.dateTime.month(.abbreviated).day().hour().minute()) }
-        return Label(since.map { "Tracking since \($0); earlier usage wasn't recorded." }
+        return Label(since.map { "Recorded since \($0), and only while the app runs." }
                      ?? "Nothing recorded yet for this range.",
                      systemImage: "clock.badge.exclamationmark")
             .font(.system(size: 9.5))
@@ -364,6 +364,7 @@ private struct RangePicker: View {
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(item.spokenTitle)
                 .accessibilityAddTraits(item == range ? .isSelected : [])
             }
         }
@@ -384,7 +385,7 @@ private struct BreakdownCard: View {
     var title: String
     var symbol: String
     var rows: [BreakdownRow]
-    private let limit = 6
+    private let limit = 7
 
     var body: some View {
         CardChrome(fill: true) {
@@ -512,5 +513,15 @@ private struct PillButton: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(.white.opacity(0.14), in: Capsule())
+    }
+}
+
+private extension UsageRange {
+    var spokenTitle: String {
+        switch self {
+        case .today: "Today"
+        case .week: "Last 7 days"
+        case .month: "Last 30 days"
+        }
     }
 }

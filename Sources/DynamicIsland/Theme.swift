@@ -30,7 +30,8 @@ enum Theme {
 
 extension Provider {
     var tint: Color {
-        switch self {
+        if isUnknown { return Color(white: 0.6) }
+        return switch self {
         case .claude: Color(red: 0.85, green: 0.47, blue: 0.34)
         case .codex: Color(red: 0.31, green: 0.78, blue: 0.64)
         case .gemini: Color(red: 0.42, green: 0.60, blue: 1.0)
@@ -39,7 +40,8 @@ extension Provider {
     }
 
     var symbol: String {
-        switch self {
+        if isUnknown { return "questionmark.circle" }
+        return switch self {
         case .claude: "asterisk"
         case .codex: "chevron.left.forwardslash.chevron.right"
         case .gemini: "sparkle"

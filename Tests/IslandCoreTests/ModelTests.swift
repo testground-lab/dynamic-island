@@ -59,7 +59,7 @@ final class VolatileDefaults: UserDefaults, @unchecked Sendable {
     let model = IslandModel.demo()
     #expect(model.accounts.count == 5); #expect(model.usage.today.count == 3)
     #expect(model.accounts.first?.bindingWindow?.resetsAt ?? .distantPast > Date())
-    #expect(model.requestsLastHour == 6)
+    #expect(model.requestsLastHour == 456)
     if case .connected = model.connection {} else { Issue.record("Demo should be connected") }
     let accounts = model.accounts
     model.start(); model.refreshNow(); model.stop()

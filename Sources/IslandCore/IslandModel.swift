@@ -66,9 +66,13 @@ import Observation
         return enabled.filter { $0.bindingWindow != nil }.max { $0.requestsLastHour < $1.requestsLastHour }
             ?? enabled.first { !$0.windows.isEmpty } ?? enabled.first
     }
+    /// Proxy-side per-account buckets survive app restarts but skip config API-key
+    /// credentials; the local usage tally covers those but only since tracking began.
+    /// Neither undercounts the other's blind spot, so take the larger.
     public var requestsLastHour: Int {
-        if !usage.lastHour.isEmpty || !usage.today.isEmpty { return usage.lastHour.reduce(0) { addingCounts($0, $1.requests) } }
-        return accounts.reduce(0) { addingCounts($0, $1.requestsLastHour) }
+        let fromAccounts = accounts.reduce(0) { addingCounts($0, $1.requestsLastHour) }
+        let fromUsage = usage.lastHour.reduce(0) { addingCounts($0, $1.requests) }
+        return max(fromAccounts, fromUsage)
     }
     private func poll(generation current: Int) async -> Bool {
         do {

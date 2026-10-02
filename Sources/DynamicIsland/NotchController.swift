@@ -128,9 +128,7 @@ final class NotchController {
         cameraRect = notch
         ui.notchSize = notch.size
         // Shorter screens (e.g. "Larger Text" scaling) get a shorter panel.
-        // The page scrolls past ~60% of the visible screen height.
-        ui.maxContentHeight = (screen.visibleFrame.height * 0.6).rounded()
-        ui.panelHeight = min(notch.height + ui.maxContentHeight + 80, screen.frame.height - 40)
+        ui.panelHeight = min(IslandMetrics.panelSize.height, screen.frame.height - 40)
         let size = CGSize(width: IslandMetrics.panelSize.width, height: ui.panelHeight)
         let frame = CGRect(x: (notch.midX - size.width / 2).rounded(), y: screen.frame.maxY - size.height,
                            width: size.width, height: size.height)

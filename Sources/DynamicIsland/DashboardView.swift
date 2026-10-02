@@ -6,8 +6,6 @@ enum DashboardMetrics {
     static let contentWidth: CGFloat = 424
     static let spacing: CGFloat = 6
     static let cardRadius: CGFloat = 14
-    /// Fallback scroll cap when the caller doesn't know the screen.
-    static let defaultMaxContentHeight: CGFloat = 420
 }
 
 /// The open island's content: a header row beside the camera, then one
@@ -21,10 +19,10 @@ struct DashboardView: View {
     var headerHeight: CGFloat = 28
     /// Width of the camera between the header's halves (0: no camera).
     var cameraGap: CGFloat = 0
-    /// The page scrolls beyond this height.
-    var maxContentHeight: CGFloat = DashboardMetrics.defaultMaxContentHeight
+    /// Fixed height of the scrolling page (see `PageSizing.viewport`).
+    var pageHeight: CGFloat
     /// Offscreen snapshots can't render scroll views; they get the page clipped
-    /// at `maxContentHeight`, shifted up by this offset instead.
+    /// to `pageHeight`, shifted up by this offset instead.
     var snapshotOffset: CGFloat?
     var openSettings: () -> Void
 
@@ -69,74 +67,59 @@ struct DashboardView: View {
             let content = pageContent(now: context.date)
             if let snapshotOffset {
                 // No fade here: the snapshot can't tell whether more is below.
-                SnapshotClip(offset: snapshotOffset, maxHeight: maxContentHeight) { content }
+                content
+                    .fixedSize(horizontal: false, vertical: true)
+                    .offset(y: -snapshotOffset)
+                    .frame(height: pageHeight, alignment: .top)
                     .clipped()
             } else {
-                // Hug the content and scroll only past the cap. Sized in layout
-                // (not from a measured @State) so the island's open spring and
-                // height changes animate in one pass, without a first-frame jump.
-                ScrollCap(maxHeight: maxContentHeight) {
-                    ScrollView(.vertical) { content }
-                        .scrollIndicators(.never)
-                        .scrollBounceBehavior(.basedOnSize)
-                        .onScrollGeometryChange(for: EdgeState.self) { geo in
-                            EdgeState(above: geo.contentOffset.y > 2,
-                                      below: geo.contentOffset.y + geo.containerSize.height < geo.contentSize.height - 2)
-                        } action: { _, edges in
-                            withAnimation(.easeOut(duration: 0.15)) {
-                                moreAbove = edges.above
-                                moreBelow = edges.below
-                            }
+                // One fixed height whatever the content: short pages just don't scroll.
+                ScrollView(.vertical) { content }
+                    .scrollIndicators(.never)
+                    .scrollBounceBehavior(.basedOnSize)
+                    .onScrollGeometryChange(for: EdgeState.self) { geo in
+                        EdgeState(above: geo.contentOffset.y > 2,
+                                  below: geo.contentOffset.y + geo.containerSize.height < geo.contentSize.height - 2)
+                    } action: { _, edges in
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            moreAbove = edges.above
+                            moreBelow = edges.below
                         }
-                        .mask(EdgeFade(top: moreAbove, bottom: moreBelow))
-                }
+                    }
+                    .mask(EdgeFade(top: moreAbove, bottom: moreBelow))
             }
         }
     }
 
     @ViewBuilder private func pageContent(now: Date) -> some View {
-        if let problem = model.connection.problem, model.accounts.isEmpty {
-            ProblemView(title: problem.title, detail: problem.detail, transient: model.connection.isTransient,
-                        retry: { model.refreshNow() }, openSettings: openSettings)
-        } else {
-            VStack(spacing: DashboardMetrics.spacing) {
-                if let problem = model.connection.problem {
-                    ProblemBanner(title: problem.title, transient: model.connection.isTransient,
-                                  action: model.connection.isTransient ? { model.refreshNow() } : openSettings)
-                }
-                let active = model.accounts.filter { $0.health != .disabled }.count
-                SectionHeader(title: "Limits") {
-                    Text(active == 1 ? "1 account" : "\(active) accounts")
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(Theme.secondary)
-                }
-                LimitsPage(accounts: model.accounts, now: now)
-                SectionHeader(title: "Usage") { RangePicker(range: $range) }
-                    .padding(.top, 4)
-                UsagePage(reports: model.usageReports, available: model.usageAvailable, range: range)
+        // Both sections always render; a connection problem adds a card on top
+        // and each section explains its own empty state.
+        VStack(spacing: DashboardMetrics.spacing) {
+            if let problem = model.connection.problem, model.accounts.isEmpty {
+                ProblemView(title: problem.title, detail: problem.detail, transient: model.connection.isTransient,
+                            retry: { model.refreshNow() }, openSettings: openSettings)
+            } else if let problem = model.connection.problem {
+                ProblemBanner(title: problem.title, transient: model.connection.isTransient,
+                              action: model.connection.isTransient ? { model.refreshNow() } : openSettings)
             }
+            let active = model.accounts.filter { $0.health != .disabled }.count
+            SectionHeader(title: "Limits") {
+                Text(active == 1 ? "1 account" : "\(active) accounts")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(Theme.secondary)
+            }
+            LimitsPage(accounts: model.accounts, now: now,
+                       emptyText: model.connection.problem == nil
+                           ? "No accounts logged in to the proxy."
+                           : "Account limits appear once the proxy can be read.")
+            SectionHeader(title: "Usage") { RangePicker(range: $range) }
+                .padding(.top, 4)
+            UsagePage(report: model.usageReports[range], state: model.usageState(for: range))
         }
     }
 }
 
 // MARK: - Header pieces
-
-/// Snapshot stand-in for a scrolled ScrollView: shows the child from `offset`
-/// down, at most `maxHeight` tall.
-private struct SnapshotClip: Layout {
-    var offset: CGFloat
-    var maxHeight: CGFloat
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        guard let child = subviews.first?.sizeThatFits(.init(width: proposal.width, height: nil)) else { return .zero }
-        return CGSize(width: child.width, height: min(max(child.height - offset, 0), maxHeight))
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        subviews.first?.place(at: CGPoint(x: bounds.minX, y: bounds.minY - offset), anchor: .topLeading,
-                              proposal: .init(width: bounds.width, height: nil))
-    }
-}
 
 private struct EdgeState: Equatable {
     var above: Bool
@@ -159,20 +142,6 @@ private struct EdgeFade: View {
     }
 }
 
-/// Sizes a vertical ScrollView to its content's height, capped at `maxHeight`.
-private struct ScrollCap: Layout {
-    var maxHeight: CGFloat
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        guard let child = subviews.first else { return .zero }
-        let ideal = child.sizeThatFits(.init(width: proposal.width, height: nil))
-        return CGSize(width: proposal.width ?? ideal.width, height: min(ideal.height, maxHeight))
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        subviews.first?.place(at: bounds.origin, anchor: .topLeading, proposal: .init(bounds.size))
-    }
-}
 
 private struct SectionHeader<Trailing: View>: View {
     var title: String
@@ -234,11 +203,12 @@ private struct CardChrome<Content: View>: View {
 private struct LimitsPage: View {
     var accounts: [Account]
     var now: Date
+    var emptyText: String
 
     var body: some View {
         let active = accounts.filter { $0.health != .disabled }
         if active.isEmpty {
-            EmptyNote(symbol: "person.crop.circle.badge.questionmark", text: "No accounts logged in to the proxy.")
+            EmptyNote(symbol: "person.crop.circle.badge.questionmark", text: emptyText)
         } else {
             let rows = stride(from: 0, to: active.count, by: 2).map { Array(active[$0..<min($0 + 2, active.count)]) }
             VStack(spacing: DashboardMetrics.spacing) {
@@ -323,26 +293,30 @@ struct AccountCard: View {
 }
 
 private struct UsagePage: View {
-    var reports: [UsageRange: UsageReport]
-    var available: Bool
-    var range: UsageRange
+    var report: UsageReport?
+    var state: UsageState
 
     var body: some View {
-        let report = reports[range]
         VStack(spacing: DashboardMetrics.spacing) {
             CardChrome {
                 VStack(alignment: .leading, spacing: 5) {
-                    if !available {
-                        note("This proxy doesn't expose its usage queue, so usage can't be recorded.")
-                    } else if let report {
+                    if let report, state == .data {
                         totals(report)
                         if report.isPartial { partialNote(report) }
-                    } else {
-                        note("Waiting for the first poll.")
+                    } else if let message = state.message {
+                        Label(message, systemImage: symbol)
+                            .font(.system(size: 10))
+                            .foregroundStyle(Theme.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if state == .empty, let report, let since = report.trackingSince {
+                            Text("Recording since \(since.formatted(.dateTime.month(.abbreviated).day().hour().minute())).")
+                                .font(.system(size: 9.5))
+                                .foregroundStyle(Theme.tertiary)
+                        }
                     }
                 }
             }
-            if available, let report, report.totals.requests > 0 {
+            if state == .data, let report {
                 HStack(alignment: .top, spacing: DashboardMetrics.spacing) {
                     BreakdownCard(title: "By account", symbol: "person.2.fill",
                                   rows: report.byAccount.map { BreakdownRow(id: $0.id, name: $0.label, provider: $0.provider, totals: $0.totals) })
@@ -356,6 +330,15 @@ private struct UsagePage: View {
                 }
                 .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+
+    private var symbol: String {
+        switch state {
+        case .needsKey, .keyRejected: "key.fill"
+        case .proxyUnreachable, .queueUnavailable, .queueError: "exclamationmark.triangle.fill"
+        case .waiting: "hourglass"
+        case .empty, .data: "tray"
         }
     }
 

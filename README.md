@@ -28,3 +28,12 @@ Inside, Limits and Usage share one page; scroll to see more. "Open on hover" is 
 **The usage queue is a destructive read.** The proxy keeps each record about 60 seconds and gives it to the first
 reader. If the CLIProxyAPI web panel or another tool reads the queue at the same time, records are split between
 them and every reader undercounts. Usage before the app started is not available ("tracking since" in the UI).
+
+## Troubleshooting
+
+Usage stays empty until a management key is saved in Settings: without one the app never reads the queue.
+Queue reads are logged (counts and status only, never the key):
+
+```sh
+/usr/bin/log show --last 10m --predicate 'subsystem == "dev.ksotis.dynamic-island"'
+```

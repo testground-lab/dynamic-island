@@ -3,6 +3,9 @@ import IslandCore
 import SwiftUI
 
 enum Theme {
+    /// Outer height of the open dashboard (island and popover alike). Fixed:
+    /// content scrolls inside it, it never grows.
+    static let openHeight: CGFloat = 262
     /// With Reduce Motion on, every animation becomes a short cross-fade-like ease.
     private static func motion(_ animation: Animation) -> Animation {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? .easeInOut(duration: 0.15) : animation

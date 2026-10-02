@@ -11,7 +11,6 @@ final class IslandUIState {
     /// Island frame in window coordinates (top-left origin), used for hit-testing.
     var islandFrame: CGRect = .zero
     var panelHeight: CGFloat = IslandMetrics.panelSize.height
-    var maxContentHeight: CGFloat = DashboardMetrics.defaultMaxContentHeight
     /// Snapshot only: render the page scrolled down by this much.
     var snapshotOffset: CGFloat?
     /// Offscreen rendering (no scroll views, see `Snapshots`).
@@ -33,7 +32,7 @@ enum IslandMetrics {
     /// Default panel size. The real height is set per screen in
     /// `NotchController.place(on:)` (page cap + header + room for the spring
     /// overshoot); the rest of the panel is transparent and click-through.
-    static let panelSize = CGSize(width: expandedWidth + 64, height: 420)
+    static let panelSize = CGSize(width: expandedWidth + 64, height: Theme.openHeight + 60)
 }
 
 struct IslandView: View {
@@ -84,7 +83,9 @@ struct IslandView: View {
         return DashboardView(model: model, range: $ui.usageRange,
                              headerHeight: ui.notchSize.height,
                              cameraGap: ui.notchSize.width,
-                             maxContentHeight: ui.maxContentHeight,
+                             pageHeight: PageSizing.viewport(total: Theme.openHeight, header: ui.notchSize.height,
+                                                             spacing: DashboardMetrics.spacing,
+                                                             chrome: IslandMetrics.bottomInset),
                              snapshotOffset: ui.isSnapshot ? (ui.snapshotOffset ?? 0) : nil,
                              openSettings: openSettings)
             .padding(.horizontal, shoulder + IslandMetrics.contentInset)

@@ -1,5 +1,8 @@
 import Foundation
 import Observation
+import os
+
+private let usageLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: "usage")
 
 @MainActor @Observable public final class IslandModel {
     public private(set) var accounts: [Account] = []
@@ -7,6 +10,8 @@ import Observation
     public private(set) var connection: ConnectionState = .connecting
     public private(set) var lastUpdated: Date?
     public private(set) var usageAvailable = true
+    /// Last usage-queue read failure other than 401/404 (short, no secrets).
+    public private(set) var usageQueueError: String?
     public var baseURLString: String
     public var liveQuotaEnabled: Bool {
         didSet {
@@ -114,6 +119,7 @@ import Observation
                 guard generation == current else { return false }
                 hasKey = false
                 connection = .needsKey
+                usageLog.notice("no management key stored; usage-queue not polled")
                 return false
             }
             guard let url = BaseURLValidator.validate(baseURLString) else {
@@ -125,10 +131,18 @@ import Observation
             let drain: UsageDrainResult?
             do {
                 drain = try await client.drainUsageQueueResult()
+                usageQueueError = nil
+                if let drain {
+                    usageLog.notice("usage-queue read: \(drain.records.count, privacy: .public) records, available=\(drain.available, privacy: .public)")
+                }
             } catch ManagementError.unauthorized {
+                usageLog.error("usage-queue read: 401 unauthorized")
                 throw ManagementError.unauthorized
             } catch {
                 guard !Task.isCancelled else { throw CancellationError() }
+                let reason = Self.describe(error)
+                usageLog.error("usage-queue read failed: \(reason, privacy: .public)")
+                usageQueueError = reason
                 drain = nil
             }
             if let drain, drain.available || !drain.records.isEmpty {
@@ -174,6 +188,26 @@ import Observation
             return true
         }
     }
+    /// Short, secret-free description of a management error.
+    static func describe(_ error: Error) -> String {
+        switch error as? ManagementError {
+        case .proxyDown: "proxy not reachable"
+        case .unauthorized: "key rejected (401)"
+        case .http(let code): "HTTP \(code)"
+        case .decoding: "unreadable response"
+        case .invalidBaseURL: "invalid proxy address"
+        case .responseTooLarge: "response too large"
+        case .tls: "TLS error"
+        case nil: "unexpected error"
+        }
+    }
+
+    /// Why the Usage section shows what it shows for `range`.
+    public func usageState(for range: UsageRange) -> UsageState {
+        UsageState.resolve(connection: connection, usageAvailable: usageAvailable,
+                           queueError: usageQueueError, report: usageReports[range])
+    }
+
     private func refreshUsageReports(now: Date, generation current: Int) async {
         let day = store.dayStart(now: now)
         let currentAccounts = accounts

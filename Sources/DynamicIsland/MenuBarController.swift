@@ -9,7 +9,6 @@ final class MenuBarController: NSObject {
     private let model: IslandModel
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
-    private let popoverLayout = PopoverLayout()
     private let openSettings: () -> Void
     private let quit: () -> Void
     private var alive = true
@@ -23,7 +22,7 @@ final class MenuBarController: NSObject {
         popover.behavior = .transient
         popover.appearance = NSAppearance(named: .darkAqua)
         popover.contentViewController = NSHostingController(rootView:
-            PopoverDashboard(model: model, layout: popoverLayout, openSettings: { [weak self] in
+            PopoverDashboard(model: model, openSettings: { [weak self] in
                 self?.popover.performClose(nil)
                 openSettings()
             })
@@ -87,9 +86,6 @@ final class MenuBarController: NSObject {
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            // Cap the page to the screen the status item is on.
-            let screen = sender.window?.screen ?? NSScreen.main
-            popoverLayout.maxContentHeight = ((screen?.visibleFrame.height ?? 800) * 0.6).rounded()
             NSApp.activate() // otherwise the transient popover may not close on outside clicks
             popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
@@ -102,24 +98,22 @@ final class MenuBarController: NSObject {
 }
 
 /// The dashboard in the popover: no camera, so the header is one row.
-@MainActor @Observable
-final class PopoverLayout {
-    var maxContentHeight: CGFloat = 480
-}
-
 struct PopoverDashboard: View {
     let model: IslandModel
-    let layout: PopoverLayout
     var snapshotOffset: CGFloat?
     var openSettings: () -> Void
     @State var range: UsageRange = .today
 
+    static let headerHeight: CGFloat = 22
+    static let padding: CGFloat = 12
+
     var body: some View {
-        DashboardView(model: model, range: $range, headerHeight: 22,
-                      maxContentHeight: layout.maxContentHeight,
+        DashboardView(model: model, range: $range, headerHeight: Self.headerHeight,
+                      pageHeight: PageSizing.viewport(total: Theme.openHeight, header: Self.headerHeight,
+                                                      spacing: DashboardMetrics.spacing, chrome: 2 * Self.padding),
                       snapshotOffset: snapshotOffset, openSettings: openSettings)
             .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            .padding(.vertical, Self.padding)
             .background(.black)
     }
 }

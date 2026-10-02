@@ -12,22 +12,23 @@ enum Snapshots {
         let model = IslandModel.demo()
         let notch = CGSize(width: 220, height: 38)
 
-        // Page cap as on a 1169 pt tall built-in display (60% of its visible height).
-        let maxContent: CGFloat = 680
-        let states: [(String, IslandPresentation, CGFloat, UsageRange)] = [
-            ("idle", .collapsed, 0, .today),
-            ("idle-hover", .emphasized, 0, .today),
-            ("open-top", .expanded(byHover: false), 0, .today),
-            ("open-scrolled-usage", .expanded(byHover: false), 236, .week),
+        // First run: no key stored, nothing recorded (an in-memory, keyless model).
+        let keyless = IslandModel(keyStore: InMemoryKeyStore(),
+                                  defaults: UserDefaults(suiteName: "dev.ksotis.dynamic-island.snapshot") ?? .standard,
+                                  store: UsageStore(url: nil))
+        let states: [(String, IslandModel, IslandPresentation, CGFloat, UsageRange)] = [
+            ("idle", model, .collapsed, 0, .today),
+            ("idle-hover", model, .emphasized, 0, .today),
+            ("open-top", model, .expanded(byHover: false), 0, .today),
+            ("open-scrolled-usage", model, .expanded(byHover: false), 236, .week),
+            ("open-no-key", keyless, .expanded(byHover: false), 0, .today),
         ]
-        for (name, presentation, offset, range) in states {
+        for (name, model, presentation, offset, range) in states {
             let ui = IslandUIState()
             ui.notchSize = notch
             ui.presentation = presentation
             ui.usageRange = range
             ui.isSnapshot = true
-            ui.maxContentHeight = maxContent
-            ui.panelHeight = notch.height + ui.maxContentHeight + 80
             ui.snapshotOffset = offset
             let expanded = ui.isExpanded
             let view = IslandView(model: model, ui: ui, onTap: {}, openSettings: {}, quit: {})
@@ -44,7 +45,7 @@ enum Snapshots {
                           to: directory.appendingPathComponent(name + ".png"))
             }
         }
-        try write(PopoverDashboard(model: model, layout: PopoverLayout(), snapshotOffset: 0, openSettings: {}, range: .today),
+        try write(PopoverDashboard(model: model, snapshotOffset: 0, openSettings: {}, range: .today),
                   to: directory.appendingPathComponent("menubar-popover.png"))
     }
 

@@ -86,6 +86,62 @@ func hourlySeriesRespectsDST(_ timestamp: String, _ count: Int) async {
         to: calendar.startOfDay(for: now)))
 }
 
+@Test(arguments: [
+  ("2026-04-05T12:00:00Z", "2026-04-04T15:00:00Z", 24.5),
+  ("2026-10-04T12:00:00Z", "2026-10-03T15:30:00Z", 23.5),
+])
+func hourlySeriesRespectsLordHoweTransitions(
+  _ timestamp: String, _ transitionTimestamp: String, _ dayHours: Double
+) async throws {
+  let now = seriesDate(timestamp)
+  let transition = seriesDate(transitionTimestamp)
+  let calendar = seriesCalendar("Australia/Lord_Howe")
+  let midnight = calendar.startOfDay(for: now)
+  let nextMidnight = try #require(calendar.date(byAdding: .day, value: 1, to: midnight))
+  let transitionRecord = transition.addingTimeInterval(15 * 60)
+  let laterHour = try #require(calendar.date(bySettingHour: 3, minute: 0, second: 0, of: now))
+  let laterRecord = laterHour.addingTimeInterval(15 * 60)
+  let store = UsageStore(url: nil, calendar: calendar, now: { nextMidnight })
+  await store.ingest([
+    seriesRecord(at: transitionRecord, total: 50),
+    seriesRecord(at: laterRecord, total: 70),
+    seriesRecord(at: nextMidnight, total: 100),
+  ])
+  let series = await store.series(.today, now: now)
+  #expect(nextMidnight.timeIntervalSince(midnight) == dayHours * 3600)
+  #expect(series.points.first?.start == midnight)
+  #expect(series.points.last?.end == nextMidnight)
+  #expect(series.points.allSatisfy {
+    calendar.component(.minute, from: $0.start) == 0 || $0.start == transition
+  })
+  for (index, point) in series.points.enumerated() {
+    #expect(point.start < point.end && point.end <= nextMidnight)
+    if index > 0 { #expect(series.points[index - 1].end == point.start) }
+    #expect(ChartLayout.point(at: point.start, in: series, now: nextMidnight) == point)
+    #expect(ChartLayout.point(at: point.end.addingTimeInterval(-1), in: series,
+                             now: nextMidnight) == point)
+    #expect(ChartLayout.point(at: point.end, in: series, now: nextMidnight)
+      == (index + 1 < series.points.count ? series.points[index + 1] : nil))
+  }
+  // The next minute-zero boundary after 01:00 is 02:00 in autumn and 03:00 in spring.
+  let transitionPoint = try #require(series.points.first {
+    $0.start <= transitionRecord && transitionRecord < $0.end
+  })
+  #expect(calendar.component(.hour, from: transitionPoint.start) == 1)
+  #expect(transitionPoint.totalTokens == 50)
+  #expect(ChartLayout.point(at: transitionRecord, in: series, now: now) == transitionPoint)
+  let laterPoint = try #require(series.points.first { $0.start == laterHour })
+  #expect(laterPoint.totalTokens == 70)
+  #expect(ChartLayout.point(at: laterRecord, in: series, now: now) == laterPoint)
+  #expect(series.points.reduce(0) { $0 + $1.totalTokens } == 120)
+  let ticks = ChartLayout.axisTicks(series, calendar: calendar)
+  #expect(ticks.map { calendar.component(.hour, from: $0) } == [0, 6, 12, 18])
+  #expect(ticks.allSatisfy { calendar.component(.minute, from: $0) == 0 })
+  for tick in ticks {
+    #expect(ChartLayout.point(at: tick, in: series, now: now)?.start == tick)
+  }
+}
+
 @Test(arguments: ["Asia/Kolkata", "Asia/Kathmandu"])
 func offsetSeriesPlacesLocalMidnightInFirstPoint(_ zone: String) async {
   let calendar = seriesCalendar(zone)

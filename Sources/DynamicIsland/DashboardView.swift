@@ -134,7 +134,7 @@ struct DashboardView: View {
             SectionHeader(title: "Usage") { RangePicker(range: $range) }
                 .padding(.top, 4)
             UsagePage(report: model.usageReports[range], series: model.usageSeries[range],
-                      state: model.usageState(for: range), queueIssue: queueIssue, now: now)
+                      state: model.usageState(for: range), queueIssue: queueIssue)
         }
     }
 }
@@ -319,7 +319,6 @@ private struct UsagePage: View {
     /// A usage-queue problem to mention above recorded data (connection
     /// problems already have their banner at the top).
     var queueIssue: String?
-    var now: Date
 
     var body: some View {
         VStack(spacing: DashboardMetrics.spacing) {

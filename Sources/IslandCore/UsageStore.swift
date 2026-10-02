@@ -589,9 +589,11 @@ public actor UsageStore {
         var intervals: [(start: Date, end: Date)] = []
         var cursor = start
         while cursor < end {
-            let next = range.granularity == .hour
-                ? cursor.addingTimeInterval(3600)
+            let boundary = range.granularity == .hour
+                ? calendar.nextDate(after: cursor, matching: DateComponents(minute: 0, second: 0),
+                                    matchingPolicy: .nextTime) ?? end
                 : calendar.date(byAdding: .day, value: 1, to: cursor) ?? end
+            let next = min(boundary, end)
             guard next > cursor else { break }
             intervals.append((cursor, next))
             cursor = next
@@ -600,20 +602,15 @@ public actor UsageStore {
         for row in rows {
             let bucket = row.start
             guard bucket >= start, bucket < end else { continue }
-            let index: Int
-            if range.granularity == .hour {
-                index = Int(bucket.timeIntervalSince(start) / 3600)
-            } else {
-                // Upper bound on starts handles 23/25-hour local days without fixed-day arithmetic.
-                var lower = 0
-                var upper = intervals.count
-                while lower < upper {
-                    let middle = lower + (upper - lower) / 2
-                    if intervals[middle].start <= bucket { lower = middle + 1 }
-                    else { upper = middle }
-                }
-                index = lower - 1
+            // Upper bound on starts handles variable-length calendar hours and days.
+            var lower = 0
+            var upper = intervals.count
+            while lower < upper {
+                let middle = lower + (upper - lower) / 2
+                if intervals[middle].start <= bucket { lower = middle + 1 }
+                else { upper = middle }
             }
+            let index = lower - 1
             guard bins.indices.contains(index), bucket < intervals[index].end else { continue }
             let provider = row.provider
             let totals = row.totals

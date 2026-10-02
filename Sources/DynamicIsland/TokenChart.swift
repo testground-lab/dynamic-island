@@ -42,6 +42,15 @@ struct TokenChart: View {
             if let gapEnd = ChartLayout.unrecordedEnd(series), gapEnd > lower {
                 RectangleMark(xStart: .value("Start", lower), xEnd: .value("End", min(gapEnd, upper)))
                     .foregroundStyle(.white.opacity(0.045))
+                    .annotation(position: .overlay) {
+                        // Only label the span when it's wide enough to hold the words.
+                        if min(gapEnd, upper).timeIntervalSince(lower) >= upper.timeIntervalSince(lower) * 0.18 {
+                            Text("not recorded")
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundStyle(Theme.tertiary)
+                                .fixedSize()
+                        }
+                    }
             }
             if let focus {
                 RectangleMark(xStart: .value("Start", focus.start), xEnd: .value("End", focus.end))

@@ -29,9 +29,8 @@ enum IslandMetrics {
     static let bottomInset: CGFloat = 14
     /// Hover "pulse": growth per side and downward.
     static let emphasisGrowth = CGSize(width: 10, height: 5)
-    /// Default panel size. The real height is set per screen in
-    /// `NotchController.place(on:)` (page cap + header + room for the spring
-    /// overshoot); the rest of the panel is transparent and click-through.
+    /// The open island's fixed height plus room for the spring overshoot; the
+    /// rest of the panel is transparent and click-through.
     static let panelSize = CGSize(width: expandedWidth + 64, height: Theme.openHeight + 60)
 }
 

@@ -12,6 +12,8 @@ private let usageLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: 
     public private(set) var usageAvailable = true
     /// Last usage-queue read failure other than 401/404 (short, no secrets).
     public private(set) var usageQueueError: String?
+    /// Last logged queue failure, so a failure repeated every poll is logged once.
+    @ObservationIgnored private var lastLoggedQueueFailure: String?
     public var baseURLString: String
     public var liveQuotaEnabled: Bool {
         didSet {
@@ -102,11 +104,20 @@ private let usageLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: 
         lastUpdated = nil
         live = [:]
         liveAttempts = [:]
+        resetUsageStatus()
+    }
+
+    /// Queue status belongs to the proxy and key it was observed with.
+    private func resetUsageStatus() {
+        usageAvailable = true
+        usageQueueError = nil
+        lastLoggedQueueFailure = nil
     }
     public func applyBaseURL(_ string: String) -> Bool {
         guard let url = BaseURLValidator.validate(string) else { return false }
         baseURLString = url.absoluteString
         connection = .connecting
+        resetUsageStatus()
         defaults.set(baseURLString, forKey: "baseURL")
         live = [:]
         liveAttempts = [:]
@@ -129,22 +140,29 @@ private let usageLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: 
             let client = clientFactory(url, key)
             // Drain first: its short-lived queue must not wait for slow live quota calls.
             let drain: UsageDrainResult?
+            var queueError: String?
             do {
                 drain = try await client.drainUsageQueueResult()
-                usageQueueError = nil
                 if let drain {
-                    usageLog.notice("usage-queue read: \(drain.records.count, privacy: .public) records, available=\(drain.available, privacy: .public)")
+                    if drain.records.isEmpty {
+                        usageLog.debug("usage-queue read: 0 records, available=\(drain.available, privacy: .public)")
+                    } else {
+                        usageLog.notice("usage-queue read: \(drain.records.count, privacy: .public) records, available=\(drain.available, privacy: .public)")
+                    }
                 }
             } catch ManagementError.unauthorized {
-                usageLog.error("usage-queue read: 401 unauthorized")
+                logQueueFailure("401 unauthorized")
                 throw ManagementError.unauthorized
             } catch {
                 guard !Task.isCancelled else { throw CancellationError() }
                 let reason = Self.describe(error)
-                usageLog.error("usage-queue read failed: \(reason, privacy: .public)")
-                usageQueueError = reason
+                queueError = reason
+                logQueueFailure(reason)
                 drain = nil
             }
+            guard generation == current else { return false }
+            usageQueueError = queueError
+            if queueError == nil { lastLoggedQueueFailure = nil }
             if let drain, drain.available || !drain.records.isEmpty {
                 if await store.ingest(drain.records, trackingAvailable: drain.available) {
                     reportsDirty = true
@@ -188,6 +206,12 @@ private let usageLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: 
             return true
         }
     }
+    private func logQueueFailure(_ reason: String) {
+        guard reason != lastLoggedQueueFailure else { return }
+        lastLoggedQueueFailure = reason
+        usageLog.error("usage-queue read failed: \(reason, privacy: .public)")
+    }
+
     /// Short, secret-free description of a management error.
     static func describe(_ error: Error) -> String {
         switch error as? ManagementError {

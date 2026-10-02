@@ -13,8 +13,10 @@ enum Snapshots {
         let notch = CGSize(width: 220, height: 38)
 
         // First run: no key stored, nothing recorded (an in-memory, keyless model).
-        let keyless = IslandModel(keyStore: InMemoryKeyStore(),
-                                  defaults: UserDefaults(suiteName: "dev.ksotis.dynamic-island.snapshot") ?? .standard,
+        let suite = "dev.ksotis.dynamic-island.snapshot"
+        let keylessDefaults = UserDefaults(suiteName: suite) ?? .standard
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        let keyless = IslandModel(keyStore: InMemoryKeyStore(), defaults: keylessDefaults,
                                   store: UsageStore(url: nil))
         let states: [(String, IslandModel, IslandPresentation, CGFloat, UsageRange)] = [
             ("idle", model, .collapsed, 0, .today),

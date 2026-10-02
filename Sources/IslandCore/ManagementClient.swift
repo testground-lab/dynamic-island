@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let drainLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: "usage")
 
 public enum ManagementError: Error, Equatable, Sendable {
     case proxyDown(String)
@@ -124,6 +127,7 @@ public struct ManagementClient: Sendable {
             } catch {
                 // Popped batches cannot be retried; preserve them for local ingestion.
                 guard completedBatches > 0 else { throw error }
+                drainLog.error("usage-queue drain stopped after \(completedBatches, privacy: .public) batches; kept \(records.count, privacy: .public) records")
                 return UsageDrainResult(records: records, available: true)
             }
         }

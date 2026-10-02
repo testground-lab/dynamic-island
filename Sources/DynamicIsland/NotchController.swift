@@ -127,7 +127,7 @@ final class NotchController {
         let notch = screen.notchFrame ?? CGRect(x: screen.frame.midX - 95, y: screen.frame.maxY - 32, width: 190, height: 32)
         cameraRect = notch
         ui.notchSize = notch.size
-        // Shorter screens (e.g. "Larger Text" scaling) get a shorter panel.
+        // Never taller than the screen (e.g. with "Larger Text" scaling).
         ui.panelHeight = min(IslandMetrics.panelSize.height, screen.frame.height - 40)
         let size = CGSize(width: IslandMetrics.panelSize.width, height: ui.panelHeight)
         let frame = CGRect(x: (notch.midX - size.width / 2).rounded(), y: screen.frame.maxY - size.height,

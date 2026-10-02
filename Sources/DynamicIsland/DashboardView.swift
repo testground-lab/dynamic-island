@@ -38,6 +38,24 @@ struct DashboardView: View {
         .foregroundStyle(.white)
     }
 
+    /// Queue-specific problem, shown above recorded data.
+    private var queueIssue: String? {
+        let issue = UsageState.issue(connection: model.connection, usageAvailable: model.usageAvailable,
+                                     queueError: model.usageQueueError)
+        switch issue {
+        case .queueUnavailable?, .queueError?: return issue?.message
+        default: return nil
+        }
+    }
+
+    private var limitsEmptyText: String {
+        switch model.connection {
+        case .needsKey: "Add the key to see account limits."
+        case .connected, .connecting: "No accounts logged in to the proxy."
+        default: "Account limits appear once the proxy can be read."
+        }
+    }
+
     // MARK: Header
 
     private var header: some View {
@@ -75,7 +93,8 @@ struct DashboardView: View {
             } else {
                 // One fixed height whatever the content: short pages just don't scroll.
                 ScrollView(.vertical) { content }
-                    .scrollIndicators(.never)
+                    .frame(height: pageHeight)
+                    .scrollIndicators(.automatic)
                     .scrollBounceBehavior(.basedOnSize)
                     .onScrollGeometryChange(for: EdgeState.self) { geo in
                         EdgeState(above: geo.contentOffset.y > 2,
@@ -104,17 +123,18 @@ struct DashboardView: View {
             }
             let active = model.accounts.filter { $0.health != .disabled }.count
             SectionHeader(title: "Limits") {
-                Text(active == 1 ? "1 account" : "\(active) accounts")
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(Theme.secondary)
+                if active > 0 {
+                    Text(active == 1 ? "1 account" : "\(active) accounts")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(Theme.secondary)
+                }
             }
             LimitsPage(accounts: model.accounts, now: now,
-                       emptyText: model.connection.problem == nil
-                           ? "No accounts logged in to the proxy."
-                           : "Account limits appear once the proxy can be read.")
+                       emptyText: limitsEmptyText)
             SectionHeader(title: "Usage") { RangePicker(range: $range) }
                 .padding(.top, 4)
-            UsagePage(report: model.usageReports[range], state: model.usageState(for: range))
+            UsagePage(report: model.usageReports[range], state: model.usageState(for: range),
+                      queueIssue: queueIssue)
         }
     }
 }
@@ -295,12 +315,21 @@ struct AccountCard: View {
 private struct UsagePage: View {
     var report: UsageReport?
     var state: UsageState
+    /// A usage-queue problem to mention above recorded data (connection
+    /// problems already have their banner at the top).
+    var queueIssue: String?
 
     var body: some View {
         VStack(spacing: DashboardMetrics.spacing) {
             CardChrome {
                 VStack(alignment: .leading, spacing: 5) {
                     if let report, state == .data {
+                        if let queueIssue {
+                            Label(queueIssue, systemImage: "exclamationmark.triangle.fill")
+                                .font(.system(size: 9.5))
+                                .foregroundStyle(Theme.warning)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                         totals(report)
                         if report.isPartial { partialNote(report) }
                     } else if let message = state.message {
@@ -336,7 +365,7 @@ private struct UsagePage: View {
     private var symbol: String {
         switch state {
         case .needsKey, .keyRejected: "key.fill"
-        case .proxyUnreachable, .queueUnavailable, .queueError: "exclamationmark.triangle.fill"
+        case .proxyUnreachable, .queueUnavailable, .queueError, .pollFailed: "exclamationmark.triangle.fill"
         case .waiting: "hourglass"
         case .empty, .data: "tray"
         }

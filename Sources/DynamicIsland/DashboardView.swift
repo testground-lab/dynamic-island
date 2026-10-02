@@ -21,7 +21,7 @@ enum DashboardMetrics {
     static let spacing: CGFloat = 6
     static let cardRadius: CGFloat = 14
     /// Pages scroll past this.
-    static let contentBudget: CGFloat = 214
+    static let contentBudget: CGFloat = 270
 }
 
 /// The open island's content: a header row beside the camera, then one page.
@@ -29,6 +29,7 @@ enum DashboardMetrics {
 struct DashboardView: View {
     let model: IslandModel
     @Binding var tab: IslandTab
+    @Binding var range: UsageRange
     /// Header height; in the island this is the camera's height so the header
     /// sits in the menu-bar band beside it.
     var headerHeight: CGFloat = 28
@@ -103,7 +104,7 @@ struct DashboardView: View {
                 }
                 switch tab {
                 case .limits: LimitsPage(accounts: model.accounts, now: now)
-                case .usage: UsagePage(usage: model.usage, available: model.usageAvailable)
+                case .usage: UsagePage(reports: model.usageReports, available: model.usageAvailable, range: $range)
                 }
             }
             .id(tab)
@@ -268,68 +269,75 @@ struct AccountCard: View {
 }
 
 private struct UsagePage: View {
-    var usage: UsageSummary
+    var reports: [UsageRange: UsageReport]
     var available: Bool
-    @State private var today = false
+    @Binding var range: UsageRange
 
     var body: some View {
-        let rows = today ? usage.today : usage.lastHour
-        CardChrome {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 5) {
-                    Image(systemName: "cpu").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.secondary)
-                        .frame(width: 17)
-                    Text("Models").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.white.opacity(0.9))
-                    Spacer(minLength: 4)
-                    Button {
-                        withAnimation(Theme.emphasis) { today.toggle() }
-                    } label: {
-                        HStack(spacing: 2) {
-                            Text(today ? "Today" : "Last hour")
-                            Image(systemName: "chevron.up.chevron.down").font(.system(size: 7, weight: .bold))
-                        }
-                        .font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(Theme.secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(.white.opacity(0.08), in: Capsule())
+        let report = reports[range]
+        VStack(spacing: DashboardMetrics.spacing) {
+            CardChrome {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "chart.bar.fill").font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Theme.secondary).frame(width: 17)
+                        Text("All accounts").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.white.opacity(0.9))
+                        Spacer(minLength: 4)
+                        RangePicker(range: $range)
                     }
-                    .buttonStyle(.plain)
-                    .help("Switch between the last hour and today")
-                }
-                .frame(height: 17)
-                if !available {
-                    note("This proxy doesn't expose its usage queue.")
-                } else if rows.isEmpty {
-                    note(usage.trackingSince.map { "No requests \(today ? "today" : "in the last hour") since \($0.formatted(.dateTime.hour().minute()))." }
-                         ?? "Waiting for the first requests.")
-                } else {
-                    totals(rows)
-                    let peak = max(rows.map(\.totalTokens).max() ?? 1, 1)
-                    VStack(spacing: 5) {
-                        ForEach(rows.prefix(8)) { ModelRow(usage: $0, share: Double($0.totalTokens) / Double(peak)) }
-                    }
-                    if rows.count > 8 {
-                        Text("+\(rows.count - 8) more").font(.system(size: 9.5)).foregroundStyle(Theme.tertiary)
+                    .frame(height: 17)
+                    if !available {
+                        note("This proxy doesn't expose its usage queue, so usage can't be recorded.")
+                    } else if let report {
+                        totals(report)
+                        if report.isPartial { partialNote(report) }
+                    } else {
+                        note("Waiting for the first poll.")
                     }
                 }
+            }
+            if available, let report, report.totals.requests > 0 {
+                HStack(alignment: .top, spacing: DashboardMetrics.spacing) {
+                    BreakdownCard(title: "By account", symbol: "person.2.fill",
+                                  rows: report.byAccount.map { BreakdownRow(id: $0.id, name: $0.label, provider: $0.provider, totals: $0.totals) })
+                    BreakdownCard(title: "By model", symbol: "cpu",
+                                  rows: report.byModel.map {
+                                      BreakdownRow(id: $0.model, name: $0.model, provider: nil,
+                                                   totals: UsageTotals(requests: $0.requests, failed: $0.failed,
+                                                                       inputTokens: $0.inputTokens, outputTokens: $0.outputTokens,
+                                                                       totalTokens: $0.totalTokens))
+                                  })
+                }
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
-    private func totals(_ rows: [ModelUsage]) -> some View {
-        let tokens = rows.reduce(0) { $0 + $1.totalTokens }
-        let requests = rows.reduce(0) { $0 + $1.requests }
-        let failed = rows.reduce(0) { $0 + $1.failed }
-        return HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Text(Format.tokens(tokens)).font(Theme.number(18, .medium)).contentTransition(.numericText())
-            Text("tokens · \(requests) req")
-                .font(.system(size: 9.5))
-                .foregroundStyle(Theme.secondary)
-            if failed > 0 {
-                Text("· \(failed) failed").font(.system(size: 9.5)).foregroundStyle(Theme.warning)
+    private func totals(_ report: UsageReport) -> some View {
+        let t = report.totals
+        return VStack(alignment: .leading, spacing: 1) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(Format.tokens(t.totalTokens)).font(Theme.number(18, .medium)).contentTransition(.numericText())
+                Text("tokens · \(t.requests) req").font(.system(size: 9.5)).foregroundStyle(Theme.secondary)
+                if t.failed > 0 {
+                    Text("· \(t.failed) failed").font(.system(size: 9.5)).foregroundStyle(Theme.warning)
+                }
             }
+            Text("in \(Format.tokens(t.inputTokens)) · out \(Format.tokens(t.outputTokens))")
+                .font(.system(size: 9.5))
+                .foregroundStyle(Theme.tertiary)
         }
+    }
+
+    private func partialNote(_ report: UsageReport) -> some View {
+        let since = report.trackingSince.map { $0.formatted(.dateTime.month(.abbreviated).day().hour().minute()) }
+        return Label(since.map { "Tracking since \($0); earlier usage wasn't recorded." }
+                     ?? "Nothing recorded yet for this range.",
+                     systemImage: "clock.badge.exclamationmark")
+            .font(.system(size: 9.5))
+            .foregroundStyle(Theme.warning.opacity(0.9))
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
     }
 
     private func note(_ text: String) -> some View {
@@ -337,32 +345,91 @@ private struct UsagePage: View {
     }
 }
 
-private struct ModelRow: View {
-    var usage: ModelUsage
-    var share: Double
+/// Today / 7d / 30d.
+private struct RangePicker: View {
+    @Binding var range: UsageRange
 
     var body: some View {
-        HStack(spacing: 6) {
-            Text(usage.model)
-                .font(.system(size: 10.5, weight: .medium))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Capsule()
-                .fill(.white.opacity(0.85))
-                .frame(width: max(3, 150 * share), height: 4)
-                .frame(width: 150, alignment: .leading)
-            Text(Format.tokens(usage.totalTokens))
-                .font(Theme.number(10, .medium))
-                .frame(minWidth: 38, alignment: .trailing)
-            Text("\(usage.requests)")
-                .font(Theme.number(9.5, .regular))
-                .foregroundStyle(usage.failed > 0 ? Theme.warning : Theme.tertiary)
-                .frame(minWidth: 22, alignment: .trailing)
-                .help(usage.failed > 0 ? "\(usage.requests) requests, \(usage.failed) failed" : "\(usage.requests) requests")
+        HStack(spacing: 1) {
+            ForEach(UsageRange.allCases, id: \.self) { item in
+                Button {
+                    withAnimation(Theme.emphasis) { range = item }
+                } label: {
+                    Text(item.title)
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(item == range ? .black : Theme.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(item == range ? Color.white : .clear, in: Capsule())
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(item == range ? .isSelected : [])
+            }
         }
-        .frame(height: 14)
-        .animation(Theme.spring, value: share)
+        .padding(1.5)
+        .background(.white.opacity(0.08), in: Capsule())
+    }
+}
+
+private struct BreakdownRow: Identifiable {
+    var id: String
+    var name: String
+    var provider: Provider?
+    var totals: UsageTotals
+}
+
+/// A ranked list: name and tokens on one line, a hairline share bar under it.
+private struct BreakdownCard: View {
+    var title: String
+    var symbol: String
+    var rows: [BreakdownRow]
+    private let limit = 6
+
+    var body: some View {
+        CardChrome(fill: true) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 5) {
+                    Image(systemName: symbol).font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(Theme.secondary).frame(width: 14)
+                    Text(title).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.white.opacity(0.9))
+                    Spacer(minLength: 0)
+                    Text("tok · req").font(.system(size: 8.5)).foregroundStyle(Theme.tertiary)
+                }
+                .frame(height: 15)
+                let peak = max(rows.map(\.totals.totalTokens).max() ?? 1, 1)
+                ForEach(rows.prefix(limit)) { row in
+                    VStack(spacing: 2) {
+                        HStack(spacing: 4) {
+                            if let provider = row.provider {
+                                Image(systemName: provider.symbol)
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundStyle(provider.tint)
+                                    .frame(width: 10)
+                            }
+                            Text(row.name)
+                                .font(.system(size: 10, weight: .medium))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Text(Format.tokens(row.totals.totalTokens))
+                                .font(Theme.number(10, .medium))
+                            Text("\(row.totals.requests)")
+                                .font(Theme.number(9.5, .regular))
+                                .foregroundStyle(row.totals.failed > 0 ? Theme.warning : Theme.tertiary)
+                                .frame(minWidth: 20, alignment: .trailing)
+                        }
+                        Meter(value: Double(row.totals.totalTokens) / Double(peak),
+                              tint: (row.provider?.tint ?? .white).opacity(0.8), height: 2)
+                    }
+                    .help("\(row.name): \(row.totals.totalTokens) tokens (in \(row.totals.inputTokens), out \(row.totals.outputTokens)), \(row.totals.requests) requests" + (row.totals.failed > 0 ? ", \(row.totals.failed) failed" : ""))
+                    .accessibilityElement(children: .combine)
+                }
+                if rows.count > limit {
+                    Text("+\(rows.count - limit) more").font(.system(size: 9)).foregroundStyle(Theme.tertiary)
+                }
+            }
+        }
     }
 }
 

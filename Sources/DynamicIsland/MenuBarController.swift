@@ -83,29 +83,19 @@ final class MenuBarController: NSObject {
     @objc private func quitApp() { quit() }
 }
 
-/// Compact pill for the menu bar: ring + remaining %, then requests/hour.
+/// The menu-bar icon: a plain gauge, tinted only when something needs attention.
+/// Like the idle island, it carries no live numbers.
 struct MenuBarLabel: View {
     let model: IslandModel
 
     var body: some View {
-        HStack(spacing: 5) {
-            if model.connection.problem != nil {
-                Image(systemName: model.connection.isTransient ? "bolt.horizontal.circle.fill" : "key.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(model.connection.isTransient ? Theme.danger : Theme.warning)
-            } else if let account = model.featuredAccount {
-                QuotaRing(window: account.bindingWindow, tint: account.provider.tint, lineWidth: 2.2)
-                    .frame(width: 11, height: 11)
-                Text(Format.percent(account.bindingWindow?.remainingFraction)).font(Theme.number(11))
-            }
-            Text("\(model.requestsLastHour)/h")
-                .font(Theme.number(11, .medium))
-                .foregroundStyle(Theme.secondary)
-        }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 7)
-        .frame(height: 18)
-        .background(.black, in: Capsule())
+        let problem = model.connection.problem != nil
+        Image(systemName: problem ? (model.connection.isTransient ? "bolt.horizontal.circle.fill" : "key.fill")
+                                  : "gauge.with.dots.needle.67percent")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(problem ? (model.connection.isTransient ? Theme.danger : Theme.warning) : Color.white)
+            .frame(width: 22, height: 18)
+            .accessibilityLabel(problem ? "CLIProxy: " + (model.connection.problem?.title ?? "") : "CLIProxy dashboard")
     }
 }
 
@@ -114,10 +104,11 @@ struct PopoverDashboard: View {
     let model: IslandModel
     var scrollable = true
     var openSettings: () -> Void
-    @State private var tab: IslandTab = .limits
+    @State var tab: IslandTab = .limits
+    @State var range: UsageRange = .today
 
     var body: some View {
-        DashboardView(model: model, tab: $tab, headerHeight: 22, scrollable: scrollable, openSettings: openSettings)
+        DashboardView(model: model, tab: $tab, range: $range, headerHeight: 22, scrollable: scrollable, openSettings: openSettings)
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
             .background(.black)

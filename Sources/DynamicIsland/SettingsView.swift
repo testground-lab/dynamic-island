@@ -46,6 +46,9 @@ struct SettingsView: View {
                 Text("Plain http is only allowed for localhost; use https for anything else.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Text("Usage history comes from the proxy's usage queue, which hands each record to whoever reads it first and keeps it about a minute. While the CLIProxyAPI web panel (or another tool) also reads the queue, the two split the records and both undercount.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 LabeledContent("Status") {
                     HStack(spacing: 6) {
                         ConnectionDot(state: model.connection)

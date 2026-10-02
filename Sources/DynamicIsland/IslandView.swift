@@ -6,6 +6,7 @@ import SwiftUI
 final class IslandUIState {
     var presentation: IslandPresentation = .collapsed
     var tab: IslandTab = .limits
+    var usageRange: UsageRange = .today
     /// Size of the hardware notch (or a stand-in on displays without one).
     var notchSize = CGSize(width: 190, height: 32)
     /// Island frame in window coordinates (top-left origin), used for hit-testing.
@@ -25,8 +26,6 @@ enum IslandMetrics {
     /// Horizontal inset of content from the open island's body edge.
     static let contentInset: CGFloat = 14
     static let bottomInset: CGFloat = 14
-    /// Collapsed wings beside the camera: as wide as their content, within these bounds.
-    static let wingRange: ClosedRange<CGFloat> = 44...80
     /// Hover "pulse": growth per side and downward.
     static let emphasisGrowth = CGSize(width: 10, height: 5)
     /// Big enough for the open island plus its spring overshoot; the rest of
@@ -53,11 +52,8 @@ struct IslandView: View {
                             insertion: .opacity.animation(.easeOut(duration: 0.2).delay(0.1)),
                             removal: .opacity.animation(.easeIn(duration: 0.12))))
                 } else {
-                    CollapsedStrip(model: model, notchSize: ui.notchSize, emphasized: ui.presentation == .emphasized)
+                    IdleNotch(notchSize: ui.notchSize, emphasized: ui.presentation == .emphasized)
                         .accessibilityAction { onTap() }
-                        .transition(.asymmetric(
-                            insertion: .opacity.animation(.easeOut(duration: 0.18).delay(0.12)),
-                            removal: .opacity.animation(.easeIn(duration: 0.08))))
                 }
             }
             .background(NotchShape().fill(.black))
@@ -82,7 +78,7 @@ struct IslandView: View {
     private var expandedContent: some View {
         @Bindable var ui = ui
         let shoulder = NotchShape.shoulder(height: 200)
-        return DashboardView(model: model, tab: $ui.tab,
+        return DashboardView(model: model, tab: $ui.tab, range: $ui.usageRange,
                              headerHeight: ui.notchSize.height,
                              cameraGap: ui.notchSize.width,
                              maxContentHeight: min(DashboardMetrics.contentBudget,
@@ -95,86 +91,20 @@ struct IslandView: View {
     }
 }
 
-/// The closed island: exactly as tall as the camera, with a wing on each side.
-/// Left: quota ring + % left of the busiest account; right: requests per hour.
-/// Wings share one width (the wider content's), so the camera stays centred.
-struct CollapsedStrip: View {
-    let model: IslandModel
+/// The closed island: nothing but the camera cutout itself, so at rest it is
+/// invisible. Hovering nudges it a little wider and taller (the cue that it
+/// can be clicked open); it shows no live data.
+struct IdleNotch: View {
     var notchSize: CGSize
     var emphasized: Bool
-    @State private var leftWidth: CGFloat = 0
-    @State private var rightWidth: CGFloat = 0
-
-    private static let edgeInset: CGFloat = 9
 
     var body: some View {
         let growth = emphasized ? IslandMetrics.emphasisGrowth : .zero
-        let height = notchSize.height + growth.height
-        let wing = min(max(max(leftWidth, rightWidth) + Self.edgeInset, IslandMetrics.wingRange.lowerBound),
-                       IslandMetrics.wingRange.upperBound) + growth.width
-        let shoulder = NotchShape.shoulder(height: height)
-        HStack(spacing: 0) {
-            left
-                .fixedSize()
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { leftWidth = $0 }
-                .padding(.leading, Self.edgeInset)
-                .frame(width: wing, alignment: .leading)
-            Color.clear.frame(width: notchSize.width)
-            right
-                .fixedSize()
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { rightWidth = $0 }
-                .padding(.trailing, Self.edgeInset)
-                .frame(width: wing, alignment: .trailing)
-        }
-        .frame(height: notchSize.height)
-        .frame(height: height, alignment: .top)
-        .padding(.horizontal, shoulder)
-        .foregroundStyle(.white)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("CLIProxy")
-        .accessibilityValue(accessibilitySummary)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityHint("Opens the dashboard")
-    }
-
-    @ViewBuilder private var left: some View {
-        if model.connection.problem != nil {
-            Image(systemName: model.connection.isTransient ? "bolt.horizontal.circle.fill" : "key.fill")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(model.connection.isTransient ? Theme.danger : Theme.warning)
-        } else if let account = model.featuredAccount, let window = account.bindingWindow {
-            HStack(spacing: 4) {
-                QuotaRing(window: window, tint: account.provider.tint, lineWidth: 2.2)
-                    .frame(width: 12, height: 12)
-                Text(Format.percent(window.remainingFraction))
-                    .font(.system(size: 12, weight: .medium).monospacedDigit())
-                    .foregroundStyle(window.tint(base: account.provider.tint))
-                    .contentTransition(.numericText())
-            }
-        } else if let account = model.featuredAccount {
-            ProviderGlyph(provider: account.provider, size: 12)
-        } else {
-            ConnectionDot(state: model.connection)
-        }
-    }
-
-    private var right: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 1) {
-            Text("\(model.requestsLastHour)")
-                .font(.system(size: 12, weight: .medium).monospacedDigit())
-                .contentTransition(.numericText())
-            Text("/h").font(.system(size: 9, weight: .medium)).foregroundStyle(Theme.tertiary)
-        }
-        .opacity(model.connection.problem == nil ? 1 : 0.45)
-    }
-
-    private var accessibilitySummary: String {
-        if let problem = model.connection.problem { return problem.title }
-        var parts: [String] = []
-        if let account = model.featuredAccount, let window = account.bindingWindow {
-            parts.append("\(account.provider.displayName) \(account.label), \(window.label) \(Format.percent(window.remainingFraction)) left")
-        }
-        parts.append("\(model.requestsLastHour) requests in the last hour")
-        return parts.joined(separator: ", ")
+        Color.clear
+            .frame(width: notchSize.width + 2 * growth.width, height: notchSize.height + growth.height)
+            .accessibilityElement()
+            .accessibilityLabel("CLIProxy dashboard")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityHint("Opens quota and usage")
     }
 }

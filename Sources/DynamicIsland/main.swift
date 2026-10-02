@@ -34,8 +34,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("DynamicIsland", isDirectory: true)
             try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
-            let aggregator = UsageAggregator(persistenceURL: support.appendingPathComponent("usage.json"))
-            model = IslandModel(keyStore: KeychainKeyStore(), aggregator: aggregator)
+            let store = UsageStore(url: support.appendingPathComponent("usage.sqlite"))
+            model = IslandModel(keyStore: KeychainKeyStore(), store: store)
             model.start()
         }
         settings = SettingsWindowController(model: model)

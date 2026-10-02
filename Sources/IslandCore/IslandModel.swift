@@ -36,6 +36,7 @@ private let usageLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: 
     @ObservationIgnored private var liveAttempts: [String: Date] = [:]
     @ObservationIgnored private var isDemo = false
     @ObservationIgnored private var lastReportDay: Date?
+    @ObservationIgnored private var lastReportHour: Date?
     @ObservationIgnored private var lastReportAccounts: [Account]?
     @ObservationIgnored private var reportsDirty = true
 
@@ -238,21 +239,21 @@ private let usageLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: 
 
     private func refreshUsageReports(now: Date, generation current: Int) async {
         let day = store.dayStart(now: now)
+        let hour = store.hourStart(now: now)
         let currentAccounts = accounts
-        guard reportsDirty || lastReportDay != day || lastReportAccounts != currentAccounts else {
-            return
-        }
+        guard reportsDirty || lastReportDay != day || lastReportHour != hour
+            || lastReportAccounts != currentAccounts else { return }
         var reports: [UsageRange: UsageReport] = [:]
-        var series: [UsageRange: UsageSeries] = [:]
         for range in UsageRange.allCases {
             reports[range] = await store.report(range, accounts: currentAccounts, now: now)
-            series[range] = await store.series(range, now: now)
         }
+        let series = await store.seriesAll(now: now)
         guard generation == current, !Task.isCancelled else { return }
         if reports != usageReports { usageReports = reports }
         if series != usageSeries { usageSeries = series }
         reportsDirty = false
         lastReportDay = day
+        lastReportHour = hour
         lastReportAccounts = currentAccounts
     }
 

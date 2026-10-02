@@ -333,7 +333,7 @@ private struct UsagePage: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         totals(report)
-                        if let series { TokenChart(series: series, now: now).padding(.top, 2) }
+                        if let series { TokenChart(series: series).padding(.top, 2) }
                         if report.isPartial { partialNote(report) }
                     } else if let message = state.message {
                         Label(message, systemImage: symbol)

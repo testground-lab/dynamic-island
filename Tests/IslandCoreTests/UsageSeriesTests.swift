@@ -178,3 +178,157 @@ func offsetSeriesPlacesLocalMidnightInFirstPoint(_ zone: String) async {
   #expect(model.usageSeries.count == 3)
   #expect(model.usageSeries.values.allSatisfy { !$0.points.isEmpty && $0.peakTokens > 0 })
 }
+
+private func chartPoint(
+  _ hour: Int, tokens: [(Provider, Int)] = [], tracking: Date? = seriesNow,
+  now: Date = seriesNow
+) -> UsageSeriesPoint {
+  let start = seriesNow.addingTimeInterval(Double(hour) * 3600)
+  return UsageSeriesPoint(
+    start: start, end: start.addingTimeInterval(3600),
+    byProvider: tokens.map {
+      ProviderTokens(provider: $0.0, inputTokens: 0, outputTokens: 0, totalTokens: $0.1, requests: 1)
+    }, trackingSince: tracking, now: now)
+}
+
+@Test func chartLegendIncludesExactlyRecordedNonfutureNonzeroProviders() {
+  let eligible: Set<Provider> = [.claude, .codex, .gemini, .other("alpha"), .other("beta")]
+  let series = UsageSeries(range: .today, granularity: .hour, points: [
+    chartPoint(-1, tokens: [(.other("unrecorded"), 999)], tracking: nil),
+    chartPoint(0, tokens: [(.claude, 50), (.codex, 40), (.gemini, 20),
+                           (.other("alpha"), 20), (.other("beta"), 10), (.other("zero"), 0)]),
+    // Cached future flags must not override the caller's clock.
+    chartPoint(1, tokens: [(.other("future"), 999)], now: seriesNow.addingTimeInterval(7200)),
+  ])
+  let legend = ChartLayout.legend(series, now: seriesNow)
+  let complete = ChartLayout.legend(series, now: seriesNow, limit: Int.max)
+  let overflowProviders = Set(complete.shown.dropFirst(legend.shown.count))
+  #expect(Set(legend.shown).union(overflowProviders) == eligible)
+  #expect(legend.shown == [.claude, .codex, .other("alpha")])
+  #expect(legend.overflow == 2 && overflowProviders.count == 2)
+  #expect(complete.shown == [.claude, .codex, .other("alpha"), .gemini, .other("beta")])
+  #expect(complete.overflow == 0)
+  #expect(ChartLayout.legend(series, now: seriesNow, limit: 0).overflow == 5)
+  #expect(ChartLayout.legend(series, now: seriesNow, limit: -1).shown.isEmpty)
+}
+
+@Test func chartLegendSumsTokensWithoutOverflow() {
+  let series = UsageSeries(range: .today, granularity: .hour, points: [
+    chartPoint(-1, tokens: [(.claude, Int.max), (.codex, 60)], tracking: .distantPast),
+    chartPoint(0, tokens: [(.claude, 1), (.codex, 60), (.gemini, 100)]),
+  ])
+  #expect(ChartLayout.legend(series, now: seriesNow).shown == [.claude, .codex, .gemini])
+}
+
+@Test(arguments: ["2026-10-02T16:00:00Z", "2026-03-08T16:00:00Z", "2026-11-01T17:00:00Z"])
+func chartAxisTicksFollowLocalHours(_ timestamp: String) async {
+  let now = seriesDate(timestamp)
+  let calendar = seriesCalendar("America/New_York")
+  let store = UsageStore(url: nil, calendar: calendar, now: { now })
+  let series = await store.series(.today, now: now)
+  let ticks = ChartLayout.axisTicks(series, calendar: calendar)
+  #expect(ticks.map { calendar.component(.hour, from: $0) } == [0, 6, 12, 18])
+  #expect(ticks.allSatisfy { calendar.isDate($0, inSameDayAs: now) })
+  #expect(ticks.allSatisfy { tick in series.points.contains { $0.start == tick } })
+}
+
+@Test func chartDailyAndEmptyAxisTicks() async {
+  let store = UsageStore(url: nil, calendar: seriesCalendar(), now: { seriesNow })
+  let week = await store.series(.week, now: seriesNow)
+  let month = await store.series(.month, now: seriesNow)
+  #expect(ChartLayout.axisTicks(week, calendar: seriesCalendar()).isEmpty)
+  #expect(ChartLayout.axisTicks(month, calendar: seriesCalendar()) == [
+    month.points[0].start, month.points[15].start, month.points[29].start,
+  ])
+  #expect(ChartLayout.axisTicks(
+    UsageSeries(range: .month, granularity: .day, points: []), calendar: seriesCalendar()).isEmpty)
+}
+
+@Test func chartHitTestingRespectsHalfOpenBoundariesAndClock() {
+  let points = [chartPoint(-1, tracking: nil), chartPoint(0), chartPoint(1)]
+  let series = UsageSeries(range: .today, granularity: .hour, points: points)
+  #expect(ChartLayout.point(at: points[0].start, in: series, now: seriesNow) == points[0])
+  #expect(ChartLayout.point(at: points[0].end, in: series, now: seriesNow) == points[1])
+  #expect(ChartLayout.point(at: points[1].end, in: series, now: seriesNow) == nil)
+  #expect(ChartLayout.point(at: points[0].start.addingTimeInterval(-1), in: series, now: seriesNow) == nil)
+  #expect(ChartLayout.point(at: points[2].end, in: series, now: points[2].end) == nil)
+  #expect(ChartLayout.point(at: points[2].start, in: series, now: points[2].start) == points[2])
+  #expect(!ChartLayout.isFuture(points[2], now: points[2].start))
+  #expect(ChartLayout.isFuture(points[2], now: seriesNow))
+}
+
+@Test func chartUnrecordedEndIncludesPartialBoundary() {
+  let points = [chartPoint(-1, tracking: nil), chartPoint(0, tracking: seriesNow.addingTimeInterval(1800))]
+  let series = UsageSeries(range: .today, granularity: .hour, points: points)
+  #expect(points[1].partial)
+  #expect(ChartLayout.unrecordedEnd(series) == points[1].start)
+  #expect(ChartLayout.unrecordedEnd(UsageSeries(
+    range: .today, granularity: .hour, points: [points[0]])) == points[0].end)
+  #expect(ChartLayout.unrecordedEnd(UsageSeries(
+    range: .today, granularity: .hour, points: [points[1]])) == nil)
+  #expect(ChartLayout.unrecordedEnd(UsageSeries(
+    range: .today, granularity: .hour, points: [])) == nil)
+}
+
+@Test(arguments: ["UTC", "America/New_York", "Asia/Kathmandu"])
+func seriesAllMatchesSeparateRanges(_ zone: String) async {
+  let calendar = seriesCalendar(zone)
+  let now = seriesDate("2026-11-01T17:00:00Z")
+  let store = UsageStore(url: nil, calendar: calendar, now: { now }, trackingSince: now.addingTimeInterval(-10 * 86400))
+  let start = UsageRange.month.start(now: now, calendar: calendar)
+  var records: [UsageRecord] = []
+  for offset in 0..<30 {
+    let day = calendar.date(byAdding: .day, value: offset, to: start)!
+    records.append(seriesRecord(at: day, total: offset + 1))
+    records.append(seriesRecord(at: day.addingTimeInterval(3600), provider: "codex", total: 40))
+  }
+  await store.ingest(records)
+  let all = await store.seriesAll(now: now)
+  #expect(all.count == 3)
+  for range in UsageRange.allCases {
+    #expect(all[range] == (await store.series(range, now: now)))
+  }
+  let today = all[.today]!
+  #expect(today.points[0].totalTokens == 30)
+  #expect(today.points[1].totalTokens == 40)
+}
+
+private final class SeriesClock: @unchecked Sendable {
+  private let lock = NSLock()
+  private var date = seriesNow.addingTimeInterval(59 * 60)
+  func now() -> Date { lock.withLock { date } }
+  func advance(_ seconds: TimeInterval) { lock.withLock { date.addTimeInterval(seconds) } }
+}
+
+@MainActor @Test func modelRefreshesFutureFlagsOnHourRolloverWithoutNewUsage() async {
+  let clock = SeriesClock()
+  let stub = StubTransport([
+    .response(404, Data()), .response(200, Data(#"{"files":[]}"#.utf8)),
+    .response(404, Data()), .response(200, Data(#"{"files":[]}"#.utf8)),
+  ])
+  let defaults = VolatileDefaults()
+  defaults.set(false, forKey: "liveQuotaEnabled")
+  let model = IslandModel(
+    keyStore: InMemoryKeyStore(key: "fake"), defaults: defaults,
+    store: UsageStore(url: nil, calendar: seriesCalendar(), now: { clock.now() }),
+    clientFactory: { ManagementClient(baseURL: $0, key: $1, transport: stub) },
+    now: { clock.now() })
+  model.start()
+  defer { model.stop() }
+  for _ in 0..<1000 {
+    if model.lastUpdated == clock.now() { break }
+    try? await Task.sleep(for: .milliseconds(1))
+  }
+  #expect(model.lastUpdated == clock.now())
+  #expect(model.usageSeries[.today]?.points[13].future == true)
+  model.stop()
+  clock.advance(60)
+  model.start()
+  for _ in 0..<1000 {
+    if model.lastUpdated == clock.now() { break }
+    try? await Task.sleep(for: .milliseconds(1))
+  }
+  #expect(model.lastUpdated == clock.now())
+  #expect(model.usageSeries[.today]?.points[13].future == false)
+  #expect(model.usageSeries[.today]?.points[14].future == true)
+}

@@ -285,9 +285,7 @@ public actor UsageStore {
                         database: database.handle)
                 )
             })
-        initialSeries = Dictionary(uniqueKeysWithValues: UsageRange.allCases.map { range in
-            (range, Self.series(range, now: current, calendar: calendar, database: database.handle))
-        })
+        initialSeries = Self.seriesAll(now: current, calendar: calendar, database: database.handle)
     }
 
     private enum IngestResult {
@@ -512,6 +510,10 @@ public actor UsageStore {
 
     nonisolated func dayStart(now: Date) -> Date { calendar.startOfDay(for: now) }
 
+    nonisolated func hourStart(now: Date) -> Date {
+        calendar.dateInterval(of: .hour, for: now)?.start ?? now
+    }
+
     public func report(_ range: UsageRange, accounts: [Account], now: Date) -> UsageReport {
         Self.report(
             range, accounts: accounts, now: now, calendar: calendar, database: database.handle)
@@ -522,14 +524,64 @@ public actor UsageStore {
         Self.series(range, now: now, calendar: calendar, database: database.handle)
     }
 
+    /// Fetch all chart ranges from one committed 30-day bucket scan.
+    public func seriesAll(now: Date) -> [UsageRange: UsageSeries] {
+        Self.seriesAll(now: now, calendar: calendar, database: database.handle)
+    }
+
+    private struct SeriesRow {
+        let start: Date
+        let provider: Provider
+        let totals: UsageTotals
+    }
+
+    private static func seriesRows(
+        _ range: UsageRange, now: Date, calendar: Calendar, database: OpaquePointer?
+    ) -> [SeriesRow] {
+        guard let end = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)),
+            let lower = bucketStart(range.start(now: now, calendar: calendar)),
+            let upper = bucketStart(end),
+            let query = UsageStatement(database, """
+                SELECT start, provider, SUM(CAST(requests AS REAL)), SUM(CAST(failed AS REAL)),
+                    SUM(CAST(input AS REAL)), SUM(CAST(output AS REAL)), SUM(CAST(total AS REAL))
+                FROM buckets WHERE start >= ? AND start < ? GROUP BY start, provider
+                """),
+            query.bind([.integer(lower), .integer(upper)])
+        else { return [] }
+        var rows: [SeriesRow] = []
+        while sqlite3_step(query.handle) == SQLITE_ROW {
+            rows.append(SeriesRow(
+                start: Date(timeIntervalSince1970: sqlite3_column_double(query.handle, 0)),
+                provider: Provider(raw: query.text(1)), totals: query.totals(2)))
+        }
+        return rows
+    }
+
+    private static func seriesAll(
+        now: Date, calendar: Calendar, database: OpaquePointer?
+    ) -> [UsageRange: UsageSeries] {
+        let trackingSince = trackingDate(database)
+        let rows = seriesRows(.month, now: now, calendar: calendar, database: database)
+        return Dictionary(uniqueKeysWithValues: UsageRange.allCases.map { range in
+            (range, series(range, now: now, calendar: calendar, rows: rows,
+                           trackingSince: trackingSince))
+        })
+    }
+
     private static func series(
         _ range: UsageRange, now: Date, calendar: Calendar, database: OpaquePointer?
     ) -> UsageSeries {
-        let trackingSince = trackingDate(database)
+        series(range, now: now, calendar: calendar,
+               rows: seriesRows(range, now: now, calendar: calendar, database: database),
+               trackingSince: trackingDate(database))
+    }
+
+    private static func series(
+        _ range: UsageRange, now: Date, calendar: Calendar, rows: [SeriesRow], trackingSince: Date?
+    ) -> UsageSeries {
         let start = range.start(now: now, calendar: calendar)
         let today = calendar.startOfDay(for: now)
-        guard let end = calendar.date(byAdding: .day, value: 1, to: today),
-            let lower = bucketStart(start), let upper = bucketStart(end)
+        guard let end = calendar.date(byAdding: .day, value: 1, to: today)
         else {
             return UsageSeries(range: range, granularity: range.granularity, points: [],
                                trackingSince: trackingSince)
@@ -545,25 +597,32 @@ public actor UsageStore {
             cursor = next
         }
         var bins = Array(repeating: [Provider: UsageTotals](), count: intervals.count)
-        let query = UsageStatement(database, """
-            SELECT start, provider, SUM(CAST(requests AS REAL)), SUM(CAST(failed AS REAL)),
-                SUM(CAST(input AS REAL)), SUM(CAST(output AS REAL)), SUM(CAST(total AS REAL))
-            FROM buckets WHERE start >= ? AND start < ? GROUP BY start, provider
-            """)
-        if let query, query.bind([.integer(lower), .integer(upper)]) {
-            while sqlite3_step(query.handle) == SQLITE_ROW {
-                let bucket = Date(timeIntervalSince1970: sqlite3_column_double(query.handle, 0))
-                guard let index = intervals.firstIndex(where: { bucket >= $0.start && bucket < $0.end })
-                else { continue }
-                let provider = Provider(raw: query.text(1))
-                let totals = query.totals(2)
-                let previous = bins[index][provider] ?? .zero
-                bins[index][provider] = UsageTotals(
-                    requests: addingCounts(previous.requests, totals.requests),
-                    inputTokens: addingCounts(previous.inputTokens, totals.inputTokens),
-                    outputTokens: addingCounts(previous.outputTokens, totals.outputTokens),
-                    totalTokens: addingCounts(previous.totalTokens, totals.totalTokens))
+        for row in rows {
+            let bucket = row.start
+            guard bucket >= start, bucket < end else { continue }
+            let index: Int
+            if range.granularity == .hour {
+                index = Int(bucket.timeIntervalSince(start) / 3600)
+            } else {
+                // Upper bound on starts handles 23/25-hour local days without fixed-day arithmetic.
+                var lower = 0
+                var upper = intervals.count
+                while lower < upper {
+                    let middle = lower + (upper - lower) / 2
+                    if intervals[middle].start <= bucket { lower = middle + 1 }
+                    else { upper = middle }
+                }
+                index = lower - 1
             }
+            guard bins.indices.contains(index), bucket < intervals[index].end else { continue }
+            let provider = row.provider
+            let totals = row.totals
+            let previous = bins[index][provider] ?? .zero
+            bins[index][provider] = UsageTotals(
+                requests: addingCounts(previous.requests, totals.requests),
+                inputTokens: addingCounts(previous.inputTokens, totals.inputTokens),
+                outputTokens: addingCounts(previous.outputTokens, totals.outputTokens),
+                totalTokens: addingCounts(previous.totalTokens, totals.totalTokens))
         }
         let points = intervals.enumerated().map { index, interval in
             UsageSeriesPoint(

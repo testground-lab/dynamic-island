@@ -38,8 +38,20 @@ extension Provider {
         case .claude: Color(red: 0.85, green: 0.47, blue: 0.34)
         case .codex: Color(red: 0.31, green: 0.78, blue: 0.64)
         case .gemini: Color(red: 0.42, green: 0.60, blue: 1.0)
-        case .other: Color(red: 0.70, green: 0.66, blue: 0.95)
+        case .other(let raw): Self.otherPalette[Self.stableIndex(raw, count: Self.otherPalette.count)]
         }
+    }
+
+    /// Distinct colours for providers without their own, picked by name so
+    /// each keeps its colour across launches (unlike Swift's seeded hashing).
+    private static let otherPalette: [Color] = [
+        Color(red: 0.70, green: 0.66, blue: 0.95), Color(red: 0.95, green: 0.78, blue: 0.35),
+        Color(red: 0.93, green: 0.52, blue: 0.70), Color(red: 0.45, green: 0.80, blue: 0.88),
+        Color(red: 0.62, green: 0.83, blue: 0.45),
+    ]
+
+    private static func stableIndex(_ text: String, count: Int) -> Int {
+        Int(text.unicodeScalars.reduce(UInt32(0)) { $0 &* 31 &+ $1.value } % UInt32(count))
     }
 
     var symbol: String {

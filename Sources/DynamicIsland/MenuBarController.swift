@@ -46,15 +46,29 @@ final class MenuBarController: NSObject {
     private func render() {
         guard alive else { return }
         withObservationTracking {
-            let renderer = ImageRenderer(content: MenuBarLabel(model: model).environment(\.colorScheme, .dark))
-            renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
-            if let image = renderer.nsImage {
-                image.isTemplate = false
-                item.button?.image = image
-            }
+            item.button?.image = Self.icon(for: model.connection)
+            item.button?.setAccessibilityLabel(model.connection.problem.map { "CLIProxy: " + $0.title } ?? "CLIProxy dashboard")
         } onChange: { [weak self] in
             Task { @MainActor in self?.render() }
         }
+    }
+
+    /// A template symbol (so it follows light and dark menu bars) when all is
+    /// well; a coloured one when something needs attention.
+    static func icon(for connection: ConnectionState) -> NSImage? {
+        let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+        guard connection.problem != nil else {
+            let image = NSImage(systemSymbolName: "gauge.with.dots.needle.67percent", accessibilityDescription: nil)?
+                .withSymbolConfiguration(config)
+            image?.isTemplate = true
+            return image
+        }
+        let color: NSColor = connection.isTransient ? NSColor(Theme.danger) : NSColor(Theme.warning)
+        let image = NSImage(systemSymbolName: connection.isTransient ? "bolt.horizontal.circle.fill" : "key.fill",
+                            accessibilityDescription: nil)?
+            .withSymbolConfiguration(config.applying(.init(paletteColors: [color])))
+        image?.isTemplate = false
+        return image
     }
 
     @objc private func clicked(_ sender: NSStatusBarButton) {
@@ -81,22 +95,6 @@ final class MenuBarController: NSObject {
     @objc private func refresh() { model.refreshNow() }
     @objc private func settings() { openSettings() }
     @objc private func quitApp() { quit() }
-}
-
-/// The menu-bar icon: a plain gauge, tinted only when something needs attention.
-/// Like the idle island, it carries no live numbers.
-struct MenuBarLabel: View {
-    let model: IslandModel
-
-    var body: some View {
-        let problem = model.connection.problem != nil
-        Image(systemName: problem ? (model.connection.isTransient ? "bolt.horizontal.circle.fill" : "key.fill")
-                                  : "gauge.with.dots.needle.67percent")
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(problem ? (model.connection.isTransient ? Theme.danger : Theme.warning) : Color.white)
-            .frame(width: 22, height: 18)
-            .accessibilityLabel(problem ? "CLIProxy: " + (model.connection.problem?.title ?? "") : "CLIProxy dashboard")
-    }
 }
 
 /// The dashboard in the popover: no camera, so the header is one row.

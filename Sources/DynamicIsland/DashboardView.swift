@@ -386,6 +386,7 @@ private struct BreakdownCard: View {
     var symbol: String
     var rows: [BreakdownRow]
     private let limit = 7
+    @State private var showAll = false
 
     var body: some View {
         CardChrome(fill: true) {
@@ -399,7 +400,7 @@ private struct BreakdownCard: View {
                 }
                 .frame(height: 15)
                 let peak = max(rows.map(\.totals.totalTokens).max() ?? 1, 1)
-                ForEach(rows.prefix(limit)) { row in
+                ForEach(rows.prefix(showAll ? rows.count : limit)) { row in
                     VStack(spacing: 2) {
                         HStack(spacing: 4) {
                             if let provider = row.provider {
@@ -427,7 +428,12 @@ private struct BreakdownCard: View {
                     .accessibilityElement(children: .combine)
                 }
                 if rows.count > limit {
-                    Text("+\(rows.count - limit) more").font(.system(size: 9)).foregroundStyle(Theme.tertiary)
+                    Button(showAll ? "Show fewer" : "+\(rows.count - limit) more") {
+                        withAnimation(Theme.emphasis) { showAll.toggle() }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(Theme.secondary)
                 }
             }
         }

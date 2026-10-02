@@ -33,8 +33,15 @@ enum Snapshots {
                 .background(Color(white: 0.82)) // stand-in for a light desktop
             try write(view, to: directory.appendingPathComponent(name + ".png"))
         }
-        try write(MenuBarLabel(model: model).padding(6).background(Color(white: 0.15)),
-                  to: directory.appendingPathComponent("menubar.png"))
+        // The status icon is a template image: AppKit tints it for the menu bar.
+        if let icon = MenuBarController.icon(for: model.connection) {
+            for (name, background, ink) in [("menubar-light", Color(white: 0.93), Color.black),
+                                              ("menubar-dark", Color(white: 0.15), Color.white)] {
+                try write(Image(nsImage: icon).renderingMode(.template).foregroundStyle(ink)
+                    .frame(width: 28, height: 22).background(background),
+                          to: directory.appendingPathComponent(name + ".png"))
+            }
+        }
         try write(PopoverDashboard(model: model, scrollable: false, openSettings: {}, tab: .usage, range: .week),
                   to: directory.appendingPathComponent("menubar-popover-usage-7d.png"))
     }

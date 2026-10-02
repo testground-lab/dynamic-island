@@ -67,8 +67,10 @@ struct SettingsView: View {
                         }
                         if let error = LaunchAtLogin.set(enabled) {
                             message = (error, true)
-                            revertingLoginToggle = true
-                            launchAtLogin = LaunchAtLogin.isEnabled
+                            if launchAtLogin != LaunchAtLogin.isEnabled {
+                                revertingLoginToggle = true
+                                launchAtLogin = LaunchAtLogin.isEnabled
+                            }
                         }
                     }
                 if LaunchAtLogin.needsApproval {
@@ -148,7 +150,9 @@ struct SettingsView: View {
 
 extension SettingsView {
     static func isLoopback(_ url: URL) -> Bool {
-        ["127.0.0.1", "localhost", "::1"].contains(url.host()?.lowercased() ?? "")
+        // Foundation may keep IPv6 brackets in host().
+        let host = (url.host() ?? "").lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        return ["127.0.0.1", "localhost", "::1"].contains(host)
     }
 
     /// The management key goes to whatever host is configured; make sending it

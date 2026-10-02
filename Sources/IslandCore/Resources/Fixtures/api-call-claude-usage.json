@@ -1,0 +1,9 @@
+{
+  "status_code": 200,
+  "header": {
+    "Content-Type": [
+      "application/json"
+    ]
+  },
+  "body": "{\"five_hour\": {\"utilization\": 42, \"resets_at\": \"2026-10-02T14:00:00Z\"}, \"seven_day\": {\"utilization\": 18, \"resets_at\": \"2026-10-05T12:00:00Z\"}, \"seven_day_opus\": {\"utilization\": 5, \"resets_at\": \"2026-10-05T12:00:00Z\"}, \"seven_day_sonnet\": null, \"seven_day_oauth_apps\": null, \"seven_day_cowork\": null, \"extra_usage\": {\"ignored\": true}}"
+}

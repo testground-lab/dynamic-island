@@ -1,0 +1,5 @@
+{
+  "status_code": "200",
+  "header": {},
+  "body": "{\"plan_type\": \"plus\", \"rate_limit\": {\"allowed\": true, \"limit_reached\": false, \"primary_window\": {\"used_percent\": \"23\", \"limit_window_seconds\": 18000, \"reset_after_seconds\": 1234, \"reset_at\": 1790946000}, \"secondary_window\": {\"used_percent\": 9, \"limit_window_seconds\": 604800, \"reset_after_seconds\": 86400}}, \"credits\": {\"ignored\": true}, \"code_review_rate_limit\": {\"ignored\": true}, \"additional_rate_limits\": []}"
+}

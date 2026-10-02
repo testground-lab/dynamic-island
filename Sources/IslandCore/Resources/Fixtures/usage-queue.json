@@ -1,0 +1,363 @@
+[
+  {
+    "timestamp": "2026-10-02T11:58:00Z",
+    "model": "claude-sonnet-4-6",
+    "alias": "example-alias",
+    "provider": "claude",
+    "auth_index": "fake-index",
+    "failed": false,
+    "tokens": {
+      "input_tokens": "1000",
+      "output_tokens": 200,
+      "reasoning_tokens": 50,
+      "cached_tokens": 100,
+      "cache_read_tokens": 100,
+      "cache_creation_tokens": 0,
+      "total_tokens": 1200
+    },
+    "latency_ms": "1234.5",
+    "api_key": "fake-sensitive-key",
+    "client_ip": "192.0.2.1",
+    "resolved_client_ip": "192.0.2.1",
+    "x_forwarded_for": "192.0.2.1",
+    "user_agent": "fake-sensitive-agent",
+    "response_headers": {
+      "Sensitive": "ignored"
+    },
+    "fail": {
+      "body": "fake-sensitive-failure"
+    },
+    "access_token_sha256": "fake-sensitive-hash"
+  },
+  {
+    "timestamp": "2026-10-02T11:48:00Z",
+    "model": "gpt-5.4",
+    "alias": "example-alias",
+    "provider": "codex",
+    "auth_index": "fake-index",
+    "failed": false,
+    "tokens": {
+      "input_tokens": "1100",
+      "output_tokens": 210,
+      "reasoning_tokens": 50,
+      "cached_tokens": 100,
+      "cache_read_tokens": 100,
+      "cache_creation_tokens": 0,
+      "total_tokens": 1310
+    },
+    "latency_ms": "1234.5",
+    "api_key": "fake-sensitive-key",
+    "client_ip": "192.0.2.1",
+    "resolved_client_ip": "192.0.2.1",
+    "x_forwarded_for": "192.0.2.1",
+    "user_agent": "fake-sensitive-agent",
+    "response_headers": {
+      "Sensitive": "ignored"
+    },
+    "fail": {
+      "body": "fake-sensitive-failure"
+    },
+    "access_token_sha256": "fake-sensitive-hash"
+  },
+  {
+    "timestamp": "2026-10-02T11:38:00Z",
+    "model": "gemini-2.5-pro",
+    "alias": "example-alias",
+    "provider": "gemini-cli",
+    "auth_index": "fake-index",
+    "failed": false,
+    "tokens": {
+      "input_tokens": "1200",
+      "output_tokens": 220,
+      "reasoning_tokens": 50,
+      "cached_tokens": 100,
+      "cache_read_tokens": 100,
+      "cache_creation_tokens": 0,
+      "total_tokens": 1420
+    },
+    "latency_ms": "1234.5",
+    "api_key": "fake-sensitive-key",
+    "client_ip": "192.0.2.1",
+    "resolved_client_ip": "192.0.2.1",
+    "x_forwarded_for": "192.0.2.1",
+    "user_agent": "fake-sensitive-agent",
+    "response_headers": {
+      "Sensitive": "ignored"
+    },
+    "fail": {
+      "body": "fake-sensitive-failure"
+    },
+    "access_token_sha256": "fake-sensitive-hash"
+  },
+  {
+    "timestamp": "2026-10-02T11:28:00Z",
+    "model": "claude-sonnet-4-6",
+    "alias": "example-alias",
+    "provider": "claude",
+    "auth_index": "fake-index",
+    "failed": true,
+    "tokens": {
+      "input_tokens": "1300",
+      "output_tokens": 230,
+      "reasoning_tokens": 50,
+      "cached_tokens": 100,
+      "cache_read_tokens": 100,
+      "cache_creation_tokens": 0,
+      "total_tokens": 1530
+    },
+    "latency_ms": "1234.5",
+    "api_key": "fake-sensitive-key",
+    "client_ip": "192.0.2.1",
+    "resolved_client_ip": "192.0.2.1",
+    "x_forwarded_for": "192.0.2.1",
+    "user_agent": "fake-sensitive-agent",
+    "response_headers": {
+      "Sensitive": "ignored"
+    },
+    "fail": {
+      "body": "fake-sensitive-failure"
+    },
+    "access_token_sha256": "fake-sensitive-hash"
+  },
+  "junk re-encoded record",
+  {
+    "timestamp": "2026-10-02T11:18:00Z",
+    "model": "gpt-5.4",
+    "alias": "example-alias",
+    "provider": "codex",
+    "auth_index": "fake-index",
+    "failed": false,
+    "tokens": {
+      "input_tokens": "1400",
+      "output_tokens": 240,
+      "reasoning_tokens": 50,
+      "cached_tokens": 100,
+      "cache_read_tokens": 100,
+      "cache_creation_tokens": 0,
+      "total_tokens": 1640
+    },
+    "latency_ms": "1234.5",
+    "api_key": "fake-sensitive-key",
+    "client_ip": "192.0.2.1",
+    "resolved_client_ip": "192.0.2.1",
+    "x_forwarded_for": "192.0.2.1",
+    "user_agent": "fake-sensitive-agent",
+    "response_headers": {
+      "Sensitive": "ignored"
+    },
+    "fail": {
+      "body": "fake-sensitive-failure"
+    },
+    "access_token_sha256": "fake-sensitive-hash"
+  },
+  {
+    "timestamp": "2026-10-02T11:08:00Z",
+    "model": "gemini-2.5-pro",
+    "alias": "example-alias",
+    "provider": "gemini-cli",
+    "auth_index": "fake-index",
+    "failed": false,
+    "tokens": {
+      "input_tokens": "1500",
+      "output_tokens": 250,
+      "reasoning_tokens": 50,
+      "cached_tokens": 100,
+      "cache_read_tokens": 100,
+      "cache_creation_tokens": 0,
+      "total_tokens": 1750
+    },
+    "latency_ms": "1234.5",
+    "api_key": "fake-sensitive-key",
+    "client_ip": "192.0.2.1",
+    "resolved_client_ip": "192.0.2.1",
+    "x_forwarded_for": "192.0.2.1",
+    "user_agent": "fake-sensitive-agent",
+    "response_headers": {
+      "Sensitive": "ignored"
+    },
+    "fail": {
+      "body": "fake-sensitive-failure"
+    },
+    "access_token_sha256": "fake-sensitive-hash"
+  },
+  {
+    "timestamp": "2026-10-02T10:58:00Z",
+    "model": "claude-sonnet-4-6",
+    "alias": "example-alias",
+    "provider": "claude",
+    "auth_index": "fake-index",
+    "failed": false,
+    "tokens": {
+      "input_tokens": "1600",
+      "output_tokens": 260,
+      "reasoning_tokens": 50,
+      "cached_tokens": 100,
+      "cache_read_tokens": 100,
+      "cache_creation_tokens": 0,
+      "total_tokens": 1860
+    },
+    "latency_ms": "1234.5",
+    "api_key": "fake-sensitive-key",
+    "client_ip": "192.0.2.1",
+    "resolved_client_ip": "192.0.2.1",
+    "x_forwarded_for": "192.0.2.1",
+    "user_agent": "fake-sensitive-agent",
+    "response_headers": {
+      "Sensitive": "ignored"
+    },
+    "fail": {
+      "body": "fake-sensitive-failure"
+    },
+    "access_token_sha256": "fake-sensitive-hash"
+  },
+  {
+    "timestamp": "2026-10-02T10:48:00Z",
+    "model": "gpt-5.4",
+    "alias": "example-alias",
+    "provider": "codex",
+    "auth_index": "fake-index",
+    "failed": false,
+    "tokens": {
+      "input_tokens": "1700",
+      "output_tokens": 270,
+      "reasoning_tokens": 50,
+      "cached_tokens": 100,
+      "cache_read_tokens": 100,
+      "cache_creation_tokens": 0,
+      "total_tokens": 1970
+    },
+    "latency_ms": "1234.5",
+    "api_key": "fake-sensitive-key",
+    "client_ip": "192.0.2.1",
+    "resolved_client_ip": "192.0.2.1",
+    "x_forwarded_for": "192.0.2.1",
+    "user_agent": "fake-sensitive-agent",
+    "response_headers": {
+      "Sensitive": "ignored"
+    },
+    "fail": {
+      "body": "fake-sensitive-failure"
+    },
+    "access_token_sha256": "fake-sensitive-hash"
+  },
+  {
+    "timestamp": "2026-10-02T10:38:00Z",
+    "model": "gemini-2.5-pro",
+    "alias": "example-alias",
+    "provider": "gemini-cli",
+    "auth_index": "fake-index",
+    "failed": true,
+    "tokens": {
+      "input_tokens": "1800",
+      "output_tokens": 280,
+      "reasoning_tokens": 50,
+      "cached_tokens": 100,
+      "cache_read_tokens": 100,
+      "cache_creation_tokens": 0,
+      "total_tokens": 2080
+    },
+    "latency_ms": "1234.5",
+    "api_key": "fake-sensitive-key",
+    "client_ip": "192.0.2.1",
+    "resolved_client_ip": "192.0.2.1",
+    "x_forwarded_for": "192.0.2.1",
+    "user_agent": "fake-sensitive-agent",
+    "response_headers": {
+      "Sensitive": "ignored"
+    },
+    "fail": {
+      "body": "fake-sensitive-failure"
+    },
+    "access_token_sha256": "fake-sensitive-hash"
+  },
+  {
+    "timestamp": "2026-10-02T10:28:00Z",
+    "model": "claude-sonnet-4-6",
+    "alias": "example-alias",
+    "provider": "claude",
+    "auth_index": "fake-index",
+    "failed": false,
+    "tokens": {
+      "input_tokens": "1900",
+      "output_tokens": 290,
+      "reasoning_tokens": 50,
+      "cached_tokens": 100,
+      "cache_read_tokens": 100,
+      "cache_creation_tokens": 0,
+      "total_tokens": 2190
+    },
+    "latency_ms": "1234.5",
+    "api_key": "fake-sensitive-key",
+    "client_ip": "192.0.2.1",
+    "resolved_client_ip": "192.0.2.1",
+    "x_forwarded_for": "192.0.2.1",
+    "user_agent": "fake-sensitive-agent",
+    "response_headers": {
+      "Sensitive": "ignored"
+    },
+    "fail": {
+      "body": "fake-sensitive-failure"
+    },
+    "access_token_sha256": "fake-sensitive-hash"
+  },
+  {
+    "timestamp": "2026-10-02T10:18:00Z",
+    "model": "gpt-5.4",
+    "alias": "example-alias",
+    "provider": "codex",
+    "auth_index": "fake-index",
+    "failed": false,
+    "tokens": {
+      "input_tokens": "2000",
+      "output_tokens": 300,
+      "reasoning_tokens": 50,
+      "cached_tokens": 100,
+      "cache_read_tokens": 100,
+      "cache_creation_tokens": 0,
+      "total_tokens": 2300
+    },
+    "latency_ms": "1234.5",
+    "api_key": "fake-sensitive-key",
+    "client_ip": "192.0.2.1",
+    "resolved_client_ip": "192.0.2.1",
+    "x_forwarded_for": "192.0.2.1",
+    "user_agent": "fake-sensitive-agent",
+    "response_headers": {
+      "Sensitive": "ignored"
+    },
+    "fail": {
+      "body": "fake-sensitive-failure"
+    },
+    "access_token_sha256": "fake-sensitive-hash"
+  },
+  {
+    "timestamp": "2026-10-02T10:08:00Z",
+    "model": "gemini-2.5-pro",
+    "alias": "example-alias",
+    "provider": "gemini-cli",
+    "auth_index": "fake-index",
+    "failed": false,
+    "tokens": {
+      "input_tokens": "2100",
+      "output_tokens": 310,
+      "reasoning_tokens": 50,
+      "cached_tokens": 100,
+      "cache_read_tokens": 100,
+      "cache_creation_tokens": 0,
+      "total_tokens": 2410
+    },
+    "latency_ms": "1234.5",
+    "api_key": "fake-sensitive-key",
+    "client_ip": "192.0.2.1",
+    "resolved_client_ip": "192.0.2.1",
+    "x_forwarded_for": "192.0.2.1",
+    "user_agent": "fake-sensitive-agent",
+    "response_headers": {
+      "Sensitive": "ignored"
+    },
+    "fail": {
+      "body": "fake-sensitive-failure"
+    },
+    "access_token_sha256": "fake-sensitive-hash"
+  }
+]

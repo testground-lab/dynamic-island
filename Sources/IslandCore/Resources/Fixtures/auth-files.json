@@ -1,0 +1,616 @@
+{
+  "observed_at": "2026-10-02T12:00:00Z",
+  "files": [
+    {
+      "id": "fake-alice",
+      "auth_index": "fake-claude-1",
+      "name": "alice.json",
+      "provider": "claude",
+      "email": "alice@example.com",
+      "status": "active",
+      "disabled": false,
+      "cooldowns": null,
+      "recent_requests": [
+        {
+          "time": "00:00-00:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "01:00-01:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "02:00-02:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "03:00-03:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "04:00-04:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "05:00-05:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "06:00-06:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "07:00-07:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "08:00-08:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "09:00-09:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "10:00-10:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "11:00-11:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "12:00-12:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "13:00-13:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "14:00-14:10",
+          "success": "10",
+          "failed": 1
+        },
+        {
+          "time": "15:00-15:10",
+          "success": "10",
+          "failed": 1
+        },
+        {
+          "time": "16:00-16:10",
+          "success": "10",
+          "failed": 1
+        },
+        {
+          "time": "17:00-17:10",
+          "success": "10",
+          "failed": 1
+        },
+        {
+          "time": "18:00-18:10",
+          "success": "10",
+          "failed": 1
+        },
+        {
+          "time": "19:00-19:10",
+          "success": "10",
+          "failed": 1
+        }
+      ],
+      "success": "999",
+      "failed": 12,
+      "quota": {
+        "observed_at": "2026-10-02T11:59:04.123456789Z",
+        "signals": {
+          "Anthropic-Ratelimit-Unified-5h-Utilization": "0.42",
+          "Anthropic-Ratelimit-Unified-5h-Reset": "1790949600",
+          "Anthropic-Ratelimit-Unified-7d-Utilization": 0.18,
+          "Anthropic-Ratelimit-Unified-7d-Reset": "1791201600",
+          "Anthropic-Ratelimit-Unified-Status": "allowed",
+          "Retry-After": "30"
+        }
+      },
+      "unknown_extra": {
+        "ignored": true
+      }
+    },
+    {
+      "id": "fake-bob",
+      "auth_index": "fake-claude-2",
+      "provider": "claude",
+      "label": "Bob \u00b7 Max",
+      "email": "bob@example.com",
+      "status": "active",
+      "unavailable": true,
+      "recent_requests": [
+        {
+          "time": "00:00-00:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "01:00-01:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "02:00-02:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "03:00-03:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "04:00-04:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "05:00-05:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "06:00-06:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "07:00-07:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "08:00-08:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "09:00-09:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "10:00-10:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "11:00-11:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "12:00-12:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "13:00-13:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "14:00-14:10",
+          "success": "3",
+          "failed": 2
+        },
+        {
+          "time": "15:00-15:10",
+          "success": "3",
+          "failed": 2
+        },
+        {
+          "time": "16:00-16:10",
+          "success": "3",
+          "failed": 2
+        },
+        {
+          "time": "17:00-17:10",
+          "success": "3",
+          "failed": 2
+        },
+        {
+          "time": "18:00-18:10",
+          "success": "3",
+          "failed": 2
+        },
+        {
+          "time": "19:00-19:10",
+          "success": "3",
+          "failed": 2
+        }
+      ],
+      "cooldowns": [
+        {
+          "scope": "credential",
+          "reason": "quota",
+          "retry_at": "2026-10-02T12:30:00Z",
+          "remaining_seconds": "1800",
+          "backoff_level": 1,
+          "http_status": 429
+        }
+      ],
+      "quota": {
+        "observed_at": "2026-10-02T11:58:00Z",
+        "signals": {
+          "Anthropic-Ratelimit-Unified-5h-Utilization": "1",
+          "Anthropic-Ratelimit-Unified-5h-Reset": 1790944200,
+          "Anthropic-Ratelimit-Unified-Status": "rejected"
+        }
+      }
+    },
+    {
+      "id": "fake-charlie",
+      "auth_index": "fake-codex-1",
+      "provider": "codex",
+      "email": "charlie@example.com",
+      "status": "active",
+      "recent_requests": [
+        {
+          "time": "00:00-00:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "01:00-01:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "02:00-02:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "03:00-03:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "04:00-04:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "05:00-05:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "06:00-06:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "07:00-07:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "08:00-08:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "09:00-09:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "10:00-10:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "11:00-11:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "12:00-12:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "13:00-13:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "14:00-14:10",
+          "success": "8",
+          "failed": 0
+        },
+        {
+          "time": "15:00-15:10",
+          "success": "8",
+          "failed": 0
+        },
+        {
+          "time": "16:00-16:10",
+          "success": "8",
+          "failed": 0
+        },
+        {
+          "time": "17:00-17:10",
+          "success": "8",
+          "failed": 0
+        },
+        {
+          "time": "18:00-18:10",
+          "success": "8",
+          "failed": 0
+        },
+        {
+          "time": "19:00-19:10",
+          "success": "8",
+          "failed": 0
+        }
+      ],
+      "id_token": {
+        "chatgpt_account_id": "fake-account-0000",
+        "plan_type": "plus",
+        "other": "ignored"
+      },
+      "quota": {
+        "observed_at": "2026-10-02T11:59:00Z",
+        "signals": {
+          "X-Codex-Primary-Used-Percent": "23",
+          "X-Codex-Primary-Window-Minutes": "300",
+          "X-Codex-Primary-Reset-After-Seconds": "3600",
+          "X-Codex-Secondary-Used-Percent": 9,
+          "X-Codex-Secondary-Window-Minutes": 10080,
+          "X-Codex-Secondary-Reset-At": 1791288000,
+          "X-Codex-Plan-Type": "plus",
+          "X-Codex-Limit-Reached": "false"
+        }
+      }
+    },
+    {
+      "id": "fake-gemini",
+      "auth_index": "fake-gemini-1",
+      "provider": "gemini-cli",
+      "email": "dana@example.com",
+      "status": "active",
+      "recent_requests": [
+        {
+          "time": "00:00-00:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "01:00-01:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "02:00-02:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "03:00-03:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "04:00-04:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "05:00-05:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "06:00-06:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "07:00-07:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "08:00-08:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "09:00-09:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "10:00-10:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "11:00-11:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "12:00-12:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "13:00-13:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "14:00-14:10",
+          "success": "2",
+          "failed": 0
+        },
+        {
+          "time": "15:00-15:10",
+          "success": "2",
+          "failed": 0
+        },
+        {
+          "time": "16:00-16:10",
+          "success": "2",
+          "failed": 0
+        },
+        {
+          "time": "17:00-17:10",
+          "success": "2",
+          "failed": 0
+        },
+        {
+          "time": "18:00-18:10",
+          "success": "2",
+          "failed": 0
+        },
+        {
+          "time": "19:00-19:10",
+          "success": "2",
+          "failed": 0
+        }
+      ],
+      "quota": {
+        "signals": {}
+      }
+    },
+    {
+      "id": "fake-disabled",
+      "auth_index": "fake-disabled-1",
+      "provider": "qwen",
+      "name": "disabled.json",
+      "status": "disabled",
+      "disabled": true,
+      "recent_requests": [
+        {
+          "time": "00:00-00:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "01:00-01:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "02:00-02:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "03:00-03:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "04:00-04:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "05:00-05:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "06:00-06:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "07:00-07:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "08:00-08:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "09:00-09:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "10:00-10:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "11:00-11:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "12:00-12:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "13:00-13:10",
+          "success": "1",
+          "failed": 0
+        },
+        {
+          "time": "14:00-14:10",
+          "success": "50",
+          "failed": 0
+        },
+        {
+          "time": "15:00-15:10",
+          "success": "50",
+          "failed": 0
+        },
+        {
+          "time": "16:00-16:10",
+          "success": "50",
+          "failed": 0
+        },
+        {
+          "time": "17:00-17:10",
+          "success": "50",
+          "failed": 0
+        },
+        {
+          "time": "18:00-18:10",
+          "success": "50",
+          "failed": 0
+        },
+        {
+          "time": "19:00-19:10",
+          "success": "50",
+          "failed": 0
+        }
+      ],
+      "quota": {
+        "signals": {}
+      },
+      "note": "Example disabled credential"
+    }
+  ],
+  "new_server_field": "ignored"
+}

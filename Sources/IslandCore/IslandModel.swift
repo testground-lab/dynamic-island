@@ -4,7 +4,6 @@ import Observation
 @MainActor @Observable public final class IslandModel {
     public private(set) var accounts: [Account] = []
     public private(set) var usageReports: [UsageRange: UsageReport] = [:]
-    private var storedRequestsLastHour = 0
     public private(set) var connection: ConnectionState = .connecting
     public private(set) var lastUpdated: Date?
     public private(set) var usageAvailable = true
@@ -28,6 +27,9 @@ import Observation
     @ObservationIgnored private var live: [String: LiveQuota] = [:]
     @ObservationIgnored private var liveAttempts: [String: Date] = [:]
     @ObservationIgnored private var isDemo = false
+    @ObservationIgnored private var lastReportDay: Date?
+    @ObservationIgnored private var lastReportAccounts: [Account]?
+    @ObservationIgnored private var reportsDirty = true
 
     public init(
         keyStore: any KeyStore, defaults: UserDefaults = .standard, store: UsageStore,
@@ -40,7 +42,6 @@ import Observation
         self.defaults = defaults
         self.store = store
         self.usageReports = store.initialReports
-        self.storedRequestsLastHour = store.initialRequestsLastHour
         self.clientFactory = clientFactory
         self.nowProvider = now
         baseURLString = defaults.string(forKey: "baseURL") ?? BaseURLValidator.defaultBaseURL
@@ -92,7 +93,7 @@ import Observation
         connection = .needsKey
         accounts = []
         usageReports = [:]
-        storedRequestsLastHour = 0
+        reportsDirty = true
         lastUpdated = nil
         live = [:]
         liveAttempts = [:]
@@ -107,20 +108,6 @@ import Observation
         refreshNow()
         return true
     }
-    public var featuredAccount: Account? {
-        let enabled = accounts.filter { $0.health != .disabled }
-        return enabled.filter { $0.bindingWindow != nil }.max {
-            $0.requestsLastHour < $1.requestsLastHour
-        }
-            ?? enabled.first { !$0.windows.isEmpty } ?? enabled.first
-    }
-    /// Proxy-side per-account buckets survive app restarts but skip config API-key
-    /// credentials; the local usage tally covers those but only since tracking began.
-    /// Neither undercounts the other's blind spot, so take the larger.
-    public var requestsLastHour: Int {
-        let fromAccounts = accounts.reduce(0) { addingCounts($0, $1.requestsLastHour) }
-        return max(fromAccounts, storedRequestsLastHour)
-    }
     private func poll(generation current: Int) async -> Bool {
         do {
             guard let key = try keyStore.read(), !key.isEmpty else {
@@ -134,19 +121,19 @@ import Observation
             }
             hasKey = true
             let client = clientFactory(url, key)
-            await store.ingest([])
             // Drain first: its short-lived queue must not wait for slow live quota calls.
             let drain: UsageDrainResult?
             do {
                 drain = try await client.drainUsageQueueResult()
-
             } catch ManagementError.unauthorized {
                 throw ManagementError.unauthorized
             } catch {
                 guard !Task.isCancelled else { throw CancellationError() }
                 drain = nil
             }
-            if let drain, !drain.records.isEmpty { await store.ingest(drain.records) }
+            if let drain, drain.available {
+                if await store.ingest(drain.records) { reportsDirty = true }
+            }
             let response = try await client.authFiles()
             guard generation == current, !Task.isCancelled else { return false }
             let now = nowProvider()
@@ -154,10 +141,8 @@ import Observation
             pruneLive(for: response.files)
             accounts = AccountMapper.accounts(
                 from: response, live: liveQuotaEnabled ? live : [:], now: now)
-            let snapshot = await usageSnapshot(accounts: accounts, now: now)
+            await refreshUsageReports(now: now, generation: current)
             guard generation == current, !Task.isCancelled else { return false }
-            usageReports = snapshot.0
-            storedRequestsLastHour = snapshot.1
             if let drain { usageAvailable = drain.available }
             lastUpdated = now
             connection = .connected(at: now)
@@ -182,22 +167,26 @@ import Observation
             case .tls: connection = .failed("TLS error")
             case nil: connection = .failed("Unable to read management key")
             }
-            let snapshot = await usageSnapshot(accounts: accounts, now: nowProvider())
+            await refreshUsageReports(now: nowProvider(), generation: current)
             guard generation == current, !Task.isCancelled else { return false }
-            usageReports = snapshot.0
-            storedRequestsLastHour = snapshot.1
             return true
         }
     }
-    private func usageSnapshot(accounts: [Account], now: Date) async -> (
-        [UsageRange: UsageReport], Int
-    ) {
+    private func refreshUsageReports(now: Date, generation current: Int) async {
+        let day = store.dayStart(now: now)
+        let currentAccounts = accounts
+        guard reportsDirty || lastReportDay != day || lastReportAccounts != currentAccounts else {
+            return
+        }
         var reports: [UsageRange: UsageReport] = [:]
         for range in UsageRange.allCases {
-            reports[range] = await store.report(range, accounts: accounts, now: now)
+            reports[range] = await store.report(range, accounts: currentAccounts, now: now)
         }
-        let requests = await store.requests(since: now.addingTimeInterval(-3600))
-        return (reports, requests)
+        guard generation == current, !Task.isCancelled else { return }
+        if reports != usageReports { usageReports = reports }
+        reportsDirty = false
+        lastReportDay = day
+        lastReportAccounts = currentAccounts
     }
 
     private func fetchLive(
@@ -285,7 +274,7 @@ import Observation
                 shifted.timestamp = record.timestamp?.addingTimeInterval(shift)
                 return shifted
             }
-        let trackingSince = Calendar.current.date(byAdding: .day, value: -20, to: now)
+        let trackingSince = Calendar.autoupdatingCurrent.date(byAdding: .day, value: -20, to: now)
         let store = UsageStore(
             url: nil, now: { now }, initialRecords: records,
             initialAccounts: accounts, trackingSince: trackingSince)

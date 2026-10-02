@@ -498,7 +498,7 @@
       }
     },
     {
-      "id": "fake-disabled",
+      "id": "fake-disabled-0000",
       "auth_index": "fake-disabled-1",
       "provider": "qwen",
       "name": "disabled.json",

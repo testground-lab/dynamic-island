@@ -171,7 +171,7 @@ func minuteLabels(_ pair: (Int, String)) {
         from: try fixture(AuthFilesResponse.self, "auth-files"), live: [:], now: fixedNow)
     #expect(
         accounts.map(\.id) == [
-            "fake-alice", "fake-charlie", "fake-bob", "fake-gemini", "fake-disabled",
+            "fake-alice", "fake-charlie", "fake-bob", "fake-gemini", "fake-disabled-0000",
         ])
     #expect(accounts[0].requestsLastHour == 66)
     #expect(accounts[0].failedLastHour == 6)
@@ -216,12 +216,12 @@ func minuteLabels(_ pair: (Int, String)) {
         AccountMapper.accounts(from: changed, live: [:], now: fixedNow)[0].health == .error("Oops"))
     changed.files[0].disabled = true
     #expect(AccountMapper.accounts(from: changed, live: [:], now: fixedNow)[0].health == .disabled)
-    for (field, label) in [
-        ("email", "mail"), ("label", "label"), ("account", "account"), ("name", "name"),
-        ("id", "id"),
+    for (field, value, expected) in [
+        ("email", "mail", "mail"), ("label", "label", "label"), ("account", "account", "account"),
+        ("name", "private-file.json", "Unknown"), ("id", "fake-abcd", "Unknown · abcd")
     ] {
-        let response = try auth("{\"\(field)\":\"\(label)\"}")
-        #expect(AccountMapper.accounts(from: response, live: [:], now: fixedNow)[0].label == label)
+        let response = try auth("{\"\(field)\":\"\(value)\"}")
+        #expect(AccountMapper.accounts(from: response, live: [:], now: fixedNow)[0].label == expected)
     }
 }
 @Test(arguments: ["claude", "codex"])
@@ -262,4 +262,64 @@ func invalidBaseURLs(_ url: String) { #expect(BaseURLValidator.validate(url) == 
     #expect(try store.read() == "fake-key")
     try store.delete()
     #expect(try store.read() == nil)
+}
+
+@Test func accountLabelPrefersTrimmedEmailOverAllOtherFields() throws {
+  let response = try auth(
+    #"{"email":"  person@example.com \n","label":"Label","account":"Account.json","name":"private.json","id":"identity-1234","provider":"claude"}"#
+  )
+  #expect(
+    AccountMapper.accounts(from: response, live: [:], now: fixedNow)[0].label
+      == "person@example.com")
+}
+
+@Test func accountLabelFallsBackToTrimmedLabelWhenEmailIsBlank() throws {
+  let response = try auth(
+    #"{"email":" \t","label":"  Team Label  ","account":"Account.json","name":"private.json","id":"identity-1234","provider":"claude"}"#
+  )
+  #expect(AccountMapper.accounts(from: response, live: [:], now: fixedNow)[0].label == "Team Label")
+}
+
+@Test func accountLabelFallsBackToTrimmedAccountWithoutJsonSuffix() throws {
+  let response = try auth(
+    #"{"email":" ","label":"\n","account":"  Team Account .JSON  ","name":"private.json","id":"identity-1234","provider":"claude"}"#
+  )
+  #expect(
+    AccountMapper.accounts(from: response, live: [:], now: fixedNow)[0].label == "Team Account")
+}
+
+@Test func accountLabelFallsBackToProviderAndTrimmedIDNeverRawName() throws {
+  let response = try auth(
+    #"{"email":" ","label":"\n","account":" .json ","name":"private.json","id":"  identity-1234 \n","auth_index":"index-5678","provider":"claude"}"#
+  )
+  #expect(
+    AccountMapper.accounts(from: response, live: [:], now: fixedNow)[0].label == "Claude · 1234")
+}
+
+@Test func accountLabelFallsBackToAuthIndexWhenIDIsBlank() throws {
+  let response = try auth(
+    #"{"id":" \t","auth_index":"  index-5678 \n","name":"private.json","provider":"codex"}"#)
+  #expect(
+    AccountMapper.accounts(from: response, live: [:], now: fixedNow)[0].label == "Codex · 5678")
+}
+
+@Test func accountLabelWithNoIdentityUsesOnlyProviderNotRawName() throws {
+  let response = try auth(#"{"name":"private.json","provider":"gemini"}"#)
+  #expect(AccountMapper.accounts(from: response, live: [:], now: fixedNow)[0].label == "Gemini")
+}
+
+@Test func onlyEmptyNormalizedProviderIsUnknown() {
+  for raw in ["", " \t\n "] {
+    let provider = Provider(raw: raw)
+    #expect(provider == .other(""))
+    #expect(provider.isUnknown)
+    #expect(provider.displayName == "Unknown")
+  }
+  for provider in [
+    Provider.claude, .codex, .gemini, .other("unknown"), .other("custom"), .other(" "),
+  ] {
+    #expect(!provider.isUnknown)
+  }
+  #expect(Provider(raw: " CUSTOM ") == .other("custom"))
+  #expect(!Provider(raw: "unknown").isUnknown)
 }

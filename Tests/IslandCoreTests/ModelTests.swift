@@ -45,8 +45,6 @@ final class VolatileDefaults: UserDefaults, @unchecked Sendable {
     await waitUntil { model.lastUpdated != nil }
     #expect(model.hasKey)
     #expect(model.accounts.count == 5)
-    #expect(model.requestsLastHour == 156)
-    #expect(model.featuredAccount?.id == "fake-alice")
     #expect(defaults.object(forKey: "management-key") == nil)
     try model.clearKey()
     #expect(!model.hasKey)
@@ -101,11 +99,36 @@ final class VolatileDefaults: UserDefaults, @unchecked Sendable {
     #expect(model.accounts.count == 5)
     #expect(model.usageReports[.month]?.byModel.count == 4)
     #expect(model.accounts.first?.bindingWindow?.resetsAt ?? .distantPast > Date())
-    #expect(model.requestsLastHour == 156)
     if case .connected = model.connection {} else { Issue.record("Demo should be connected") }
     let accounts = model.accounts
     model.start()
     model.refreshNow()
     model.stop()
     #expect(model.accounts == accounts)
+}
+
+@MainActor @Test func modelStartsTrackingOnlyAfterSuccessfulQueueDrain() async {
+  let stub = StubTransport([
+    .response(404, Data()), .response(200, Fixtures.data("auth-files")),
+    .response(200, Data("[]".utf8)), .response(200, Fixtures.data("auth-files")),
+  ])
+  let defaults = VolatileDefaults()
+  defaults.set(false, forKey: "liveQuotaEnabled")
+  let now = Fixtures.referenceNow
+  let store = UsageStore(url: nil, now: { now })
+  let model = IslandModel(
+    keyStore: InMemoryKeyStore(key: "test"), defaults: defaults, store: store,
+    clientFactory: { ManagementClient(baseURL: $0, key: $1, transport: stub) },
+    now: { now })
+  defer { model.stop() }
+  #expect(model.usageReports.values.allSatisfy { $0.trackingSince == nil })
+  model.start()
+  await waitUntil { model.lastUpdated != nil }
+  #expect(!model.usageAvailable)
+  #expect(model.usageReports.count == 3)
+  #expect(model.usageReports.values.allSatisfy { $0.trackingSince == nil })
+  model.refreshNow()
+  await waitUntil { model.usageAvailable }
+  #expect(model.usageReports.values.allSatisfy { $0.trackingSince == now })
+  #expect(model.usageReports.values.allSatisfy { $0.totals == .zero })
 }

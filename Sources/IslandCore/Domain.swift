@@ -8,13 +8,15 @@ public enum Provider: Hashable, Sendable {
     case other(String)
 
     public init(raw: String) {
-        switch raw.lowercased().trimmingCharacters(in: .whitespaces) {
+        switch raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) {
         case "claude", "anthropic": self = .claude
         case "codex", "openai": self = .codex
         case "gemini", "gemini-cli", "vertex", "aistudio", "antigravity": self = .gemini
         case let other: self = .other(other)
         }
     }
+
+    public var isUnknown: Bool { self == .other("") }
 
     public var displayName: String {
         switch self {

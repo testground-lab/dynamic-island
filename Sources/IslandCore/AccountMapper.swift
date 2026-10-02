@@ -27,8 +27,7 @@ public enum AccountMapper {
                 id: file.id ?? file.authIndex ?? file.name ?? "unknown-\(offset)",
                 authIndex: file.authIndex,
                 provider: provider,
-                label: file.email ?? file.label ?? file.account ?? file.name ?? file.id
-                    ?? "Unknown",
+                label: label(for: file, provider: provider),
                 plan: candidate?.plan ?? file.idToken?.planType
                     ?? HeaderQuotaParser.plan(provider: provider, signals: signals),
                 health: health(file, provider: provider, windows: windows, now: now),
@@ -48,6 +47,17 @@ public enum AccountMapper {
             return $0.id < $1.id
         }
     }
+    private static func label(for file: AuthFile, provider: Provider) -> String {
+        for value in [file.email, file.label, file.account] {
+            guard var value = value?.trimmingCharacters(in: .whitespacesAndNewlines) else { continue }
+            if value.lowercased().hasSuffix(".json") { value = String(value.dropLast(5)).trimmingCharacters(in: .whitespacesAndNewlines) }
+            if !value.isEmpty { return value }
+        }
+        let identity = [file.id, file.authIndex].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty }
+        guard let identity else { return provider.displayName }
+        return provider.displayName + " · " + identity.suffix(4)
+    }
+
     private static func health(
         _ file: AuthFile, provider: Provider, windows: [QuotaWindow], now: Date
     ) -> AccountHealth {

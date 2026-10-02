@@ -107,8 +107,6 @@ private final class StoreClock: @unchecked Sendable {
     #expect(
         try sqliteInteger(url, sql: "SELECT MIN(start) FROM buckets")
             == Int64(reference.timeIntervalSince1970 - 900))
-    #expect(await store.requests(since: reference) == 2)
-    #expect(await store.requests(since: reference.addingTimeInterval(-1)) == 3)
     #expect(try sqliteInteger(url, sql: "PRAGMA user_version") == 1)
     #expect(
         try sqliteInteger(
@@ -130,10 +128,13 @@ private final class StoreClock: @unchecked Sendable {
                 requests: 4, failed: 1, inputTokens: 40, outputTokens: 80, totalTokens: 65))
     #expect(report.byAccount.map(\.id) == ["fake-claude-1", "fake-config-key", "unattributed"])
     #expect(
-        report.byAccount.map(\.label) == ["alice@example.com", "Codex API key", "Unattributed"])
+        report.byAccount.map(\.label) == [
+            "alice@example.com", "Codex account · -key", "Unattributed",
+        ])
     #expect(report.byAccount[0].provider == .claude)
     #expect(report.byAccount[1].provider == .codex)
     #expect(report.byAccount[2].authIndex == nil)
+    #expect(report.byAccount[2].provider == .other(""))
     #expect(report.byModel.map(\.model) == ["alpha", "beta"])
     #expect(report.byModel[0].requests == 3)
     #expect(report.byModel[0].totalTokens == 45)
@@ -184,7 +185,6 @@ private final class StoreClock: @unchecked Sendable {
     #expect(!report.byModel.contains { $0.model == "too-old" })
     #expect(report.byModel.first { $0.model == String(repeating: "x", count: 64) }?.requests == 2)
     #expect(report.byModel.allSatisfy { $0.model.count <= 64 })
-    #expect(await store.requests(since: reference) == 3)
 }
 
 @Test func pruningRemovesHistoryOlderThanThirtyOneDays() async throws {
@@ -290,11 +290,11 @@ private final class StoreClock: @unchecked Sendable {
 
 @Test func modelCardinalityAndHugeCounterSumsRemainBounded() async {
     let store = UsageStore(url: nil, calendar: utc(), now: { reference })
-    await store.ingest((0..<70).map { sample("model-\($0)", total: 10) })
+    await store.ingest((0..<220).map { sample("model-\($0)", total: 10) })
     let report = await store.report(.today, accounts: [], now: reference)
-    #expect(report.byModel.count == 50)
+    #expect(report.byModel.count == 200)
     #expect(report.byModel.first { $0.model == "other" }?.requests == 21)
-    #expect(report.totals.requests == 70)
+    #expect(report.totals.requests == 220)
     let large = UsageStore(url: nil, calendar: utc(), now: { reference })
     await large.ingest([
         sample(input: Int.max, output: Int.max), sample(input: Int.max, output: Int.max),
@@ -315,7 +315,7 @@ private final class StoreClock: @unchecked Sendable {
     ])
     let report = await store.report(.today, accounts: accounts, now: reference)
     #expect(report.byModel.map(\.model) == ["alpha", "beta", "zeta"])
-    #expect(report.byAccount.map(\.label) == ["Zed", "Alpha", "Claude API key"])
+    #expect(report.byAccount.map(\.label) == ["Zed", "Alpha", "Claude account · nfig"])
 }
 
 @MainActor @Test func modelPollBuildsAllAccountAttributedUsageReports() async {
@@ -341,7 +341,6 @@ private final class StoreClock: @unchecked Sendable {
         model.usageReports[.today]?.byAccount.map(\.label).sorted() == [
             "alice@example.com", "charlie@example.com", "dana@example.com",
         ])
-    #expect(model.requestsLastHour == 156)
     model.stop()
 }
 
@@ -357,4 +356,192 @@ private final class StoreClock: @unchecked Sendable {
             "fake-config-api-key",
         ]))
     #expect(history.records.contains { $0.authIndex == nil })
+}
+
+// A separate connection exercises real SQLite locks and failures, not store internals.
+private final class StoreTestConnection {
+  private let handle: OpaquePointer
+
+  init(_ url: URL) throws {
+    var opened: OpaquePointer?
+    guard
+      sqlite3_open_v2(
+        url.path, &opened, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil) == SQLITE_OK,
+      let opened
+    else {
+      if let opened { sqlite3_close_v2(opened) }
+      throw StoreTestError.sqlite
+    }
+    handle = opened
+  }
+
+  deinit { sqlite3_close_v2(handle) }
+
+  func execute(_ sql: String) throws {
+    guard sqlite3_exec(handle, sql, nil, nil, nil) == SQLITE_OK else {
+      throw StoreTestError.sqlite
+    }
+  }
+}
+
+@Test(arguments: [
+  ("Asia/Kolkata", "2026-10-01T18:30:00Z"),
+  ("Asia/Kathmandu", "2026-10-01T18:15:00Z"),
+  ("UTC", "2026-10-02T00:00:00Z"),
+])
+func todayIncludesMidnightBucketButNotPreviousMinute(_ zone: String, _ edge: String) async {
+  var calendar = Calendar(identifier: .gregorian)
+  calendar.timeZone = TimeZone(identifier: zone)!
+  let midnight = APIDateParser.parse(edge)!
+  let store = UsageStore(url: nil, calendar: calendar, now: { reference })
+  await store.ingest([
+    sample("previous-day", at: midnight.addingTimeInterval(-60), total: 100),
+    sample("midnight", at: midnight, total: 7),
+  ])
+  let today = await store.report(.today, accounts: [], now: reference)
+  #expect(today.start == midnight)
+  #expect(today.totals.requests == 1)
+  #expect(today.totals.totalTokens == 7)
+  #expect(today.byModel.map(\.model) == ["midnight"])
+  #expect(await store.report(.week, accounts: [], now: reference).totals.requests == 2)
+}
+
+@Test func exclusiveLockDuringOpenFallsBackWithoutCorruptingFile() async throws {
+  let url = try databaseURL()
+  defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+  let connection = try StoreTestConnection(url)
+  try connection.execute("CREATE TABLE marker(value INTEGER); INSERT INTO marker VALUES (42)")
+  let original = try Data(contentsOf: url)
+  try connection.execute("BEGIN EXCLUSIVE")
+  let store = UsageStore(url: url, calendar: utc(), now: { reference })
+  await store.ingest([sample(total: 17)])
+  #expect(await store.report(.today, accounts: [], now: reference).totals.totalTokens == 17)
+  #expect(try Data(contentsOf: url) == original)
+  #expect(!FileManager.default.fileExists(atPath: url.appendingPathExtension("corrupt").path))
+  try connection.execute("ROLLBACK")
+  #expect(try sqliteInteger(url, sql: "SELECT value FROM marker") == 42)
+  #expect(
+    try sqliteInteger(url, sql: "SELECT COUNT(*) FROM sqlite_master WHERE name = 'buckets'") == 0)
+}
+
+@Test func corruptionRecoveryKeepsOnlyNewestBackup() async throws {
+  let url = try databaseURL()
+  defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+  let backup = url.appendingPathExtension("corrupt")
+  for suffix in ["", "-wal", "-shm", ".old", ".older"] {
+    try Data("old backup".utf8).write(to: URL(fileURLWithPath: backup.path + suffix))
+  }
+  let newest = Data("newest invalid SQLite contents".utf8)
+  try newest.write(to: url)
+  let store = UsageStore(url: url, calendar: utc(), now: { reference })
+  #expect(try Data(contentsOf: backup) == newest)
+  let backups = try FileManager.default.contentsOfDirectory(
+    at: url.deletingLastPathComponent(), includingPropertiesForKeys: nil
+  ).filter { $0.lastPathComponent.hasPrefix(backup.lastPathComponent) }
+  #expect(backups == [backup])
+  await store.ingest([sample()])
+  #expect(try sqliteInteger(url, sql: "SELECT SUM(requests) FROM buckets") == 1)
+}
+
+@Test func twoStoresShareWALAndAddTheirIngestedTotals() async throws {
+  let url = try databaseURL()
+  defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+  let first = UsageStore(url: url, calendar: utc(), now: { reference })
+  let second = UsageStore(url: url, calendar: utc(), now: { reference })
+  async let firstChanged = first.ingest([sample("shared", index: "same", total: 11)])
+  async let secondChanged = second.ingest([sample("shared", index: "same", total: 19)])
+  #expect(await firstChanged)
+  #expect(await secondChanged)
+  let expected = UsageTotals(requests: 2, inputTokens: 20, outputTokens: 40, totalTokens: 30)
+  #expect(await first.report(.today, accounts: [], now: reference).totals == expected)
+  #expect(await second.report(.today, accounts: [], now: reference).totals == expected)
+  #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets") == 1)
+  #expect(
+    try sqliteInteger(
+      url, sql: "SELECT COUNT(*) FROM pragma_journal_mode WHERE journal_mode = 'wal'") == 1)
+}
+
+@Test func pruningWaitsUntilOneHourAfterLastSuccessfulPrune() async throws {
+  let url = try databaseURL()
+  defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+  let clock = StoreClock()
+  let store = UsageStore(url: url, calendar: utc(), now: { clock.now() })
+  await store.ingest([])
+  let connection = try StoreTestConnection(url)
+  // Expired history inserted externally makes the next pruning pass observable.
+  try connection.execute("INSERT INTO buckets VALUES (0, '', '', 'expired', 1, 0, 0, 0, 0)")
+  clock.advance(3599)
+  await store.ingest([])
+  #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets WHERE start = 0") == 1)
+  clock.advance(1)
+  await store.ingest([])
+  #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets WHERE start = 0") == 0)
+  try connection.execute("INSERT INTO buckets VALUES (0, '', '', 'expired', 1, 0, 0, 0, 0)")
+  clock.advance(3599)
+  await store.ingest([])
+  #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets WHERE start = 0") == 1)
+  clock.advance(1)
+  await store.ingest([])
+  #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets WHERE start = 0") == 0)
+}
+
+@Test func failedWriteRollsBackAndPendingRecordsRetryExactlyOnce() async throws {
+  let url = try databaseURL()
+  defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+  let clock = StoreClock()
+  let store = UsageStore(url: url, calendar: utc(), now: { clock.now() })
+  let connection = try StoreTestConnection(url)
+  try connection.execute(
+    """
+    CREATE TRIGGER reject_usage BEFORE INSERT ON buckets
+    WHEN NEW.model = 'rejected' BEGIN SELECT RAISE(ABORT, 'test write failure'); END
+    """)
+  // The return value also signals external schema changes; inspect committed rows instead.
+  await store.ingest([sample("first", total: 11), sample("rejected", total: 19)])
+  #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets") == 0)
+  #expect(await store.report(.today, accounts: [], now: reference).trackingSince == nil)
+  try connection.execute("DROP TRIGGER reject_usage")
+  clock.advance(60)
+  #expect(await store.ingest([sample("next", total: 5)]))
+  let report = await store.report(.today, accounts: [], now: clock.now())
+  #expect(report.totals.requests == 3)
+  #expect(report.totals.totalTokens == 35)
+  #expect(report.trackingSince == reference)
+  #expect(await store.ingest([]) == false)
+  #expect(await store.report(.today, accounts: [], now: clock.now()) == report)
+}
+
+@Test func busyWriteKeepsPendingRecordsUntilLockIsReleased() async throws {
+  let url = try databaseURL()
+  defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+  let store = UsageStore(url: url, calendar: utc(), now: { reference })
+  let connection = try StoreTestConnection(url)
+  try connection.execute("BEGIN IMMEDIATE")
+  #expect(await store.ingest([sample(total: 23)]) == false)
+  #expect(await store.report(.today, accounts: [], now: reference).trackingSince == nil)
+  try connection.execute("ROLLBACK")
+  #expect(await store.ingest([]))
+  let report = await store.report(.today, accounts: [], now: reference)
+  #expect(report.totals.requests == 1)
+  #expect(report.totals.totalTokens == 23)
+  #expect(report.trackingSince == reference)
+  await store.ingest([])
+  #expect(await store.report(.today, accounts: [], now: reference) == report)
+}
+
+@Test func unknownRoutingIndexesUseProviderAndLastFourCharacters() async {
+  let store = UsageStore(url: nil, calendar: utc(), now: { reference })
+  await store.ingest([
+    sample(index: "missing-1234", provider: "codex"),
+    sample(index: "missing-5678", provider: ""),
+    sample(index: "", provider: "claude"),
+  ])
+  let report = await store.report(.today, accounts: [], now: reference)
+  #expect(
+    report.byAccount.first { $0.authIndex == "missing-1234" }?.label == "Codex account · 1234")
+  #expect(
+    report.byAccount.first { $0.authIndex == "missing-5678" }?.label == "Unknown account · 5678")
+  let unattributed = report.byAccount.first { $0.authIndex == nil }
+  #expect(unattributed?.label == "Unattributed")
+  #expect(unattributed?.provider.isUnknown == true)
 }

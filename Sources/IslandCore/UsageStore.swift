@@ -77,6 +77,11 @@ private final class UsageStatement {
 private final class UsageDatabase: @unchecked Sendable {
     let handle: OpaquePointer?
 
+    private enum OpenResult {
+        case ready(OpaquePointer)
+        case failed(corrupt: Bool)
+    }
+
     init(url: URL?) {
         if let url {
             try? FileManager.default.createDirectory(
@@ -87,15 +92,18 @@ private final class UsageDatabase: @unchecked Sendable {
             {
                 try? FileManager.default.removeItem(at: legacy)
             }
-            if let opened = Self.open(url.path) {
+            switch Self.open(url.path) {
+            case .ready(let opened):
                 handle = opened
                 return
+            case .failed(let corrupt):
+                if corrupt, Self.moveAside(url), case .ready(let recreated) = Self.open(url.path) {
+                    handle = recreated
+                    return
+                }
             }
-            Self.moveAside(url)
-            handle = Self.open(url.path) ?? Self.open(":memory:")
-        } else {
-            handle = Self.open(":memory:")
         }
+        if case .ready(let memory) = Self.open(":memory:") { handle = memory } else { handle = nil }
     }
 
     deinit {
@@ -111,18 +119,29 @@ private final class UsageDatabase: @unchecked Sendable {
         return statement.run()
     }
 
-    private static func open(_ path: String) -> OpaquePointer? {
+    private static func open(_ path: String) -> OpenResult {
         var database: OpaquePointer?
         let result = sqlite3_open_v2(
             path, &database, SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil
         )
         guard result == SQLITE_OK, let database else {
             if let database { sqlite3_close_v2(database) }
-            return nil
+            return .failed(corrupt: isCorrupt(result))
         }
-        sqlite3_busy_timeout(database, 2000)
-        guard valid(database),
-            execute(database, "PRAGMA journal_mode = WAL"),
+        sqlite3_busy_timeout(database, 250)
+        guard let check = UsageStatement(database, "PRAGMA quick_check(1)") else {
+            let corrupt = isCorrupt(sqlite3_errcode(database))
+            sqlite3_close_v2(database)
+            return .failed(corrupt: corrupt)
+        }
+        let checkStatus = sqlite3_step(check.handle)
+        guard checkStatus == SQLITE_ROW, check.text(0) == "ok" else {
+            let corrupt = checkStatus == SQLITE_ROW || isCorrupt(checkStatus)
+            sqlite3_close_v2(database)
+            return .failed(corrupt: corrupt)
+        }
+        sqlite3_reset(check.handle)
+        guard execute(database, "PRAGMA journal_mode = WAL"),
             execute(
                 database,
                 """
@@ -140,27 +159,30 @@ private final class UsageDatabase: @unchecked Sendable {
             ) != nil,
             execute(database, "PRAGMA user_version = 1")
         else {
+            let corrupt = isCorrupt(sqlite3_errcode(database))
             sqlite3_close_v2(database)
-            return nil
+            return .failed(corrupt: corrupt)
         }
-        return database
+        return .ready(database)
     }
 
-    private static func valid(_ database: OpaquePointer) -> Bool {
-        guard let check = UsageStatement(database, "PRAGMA quick_check(1)"),
-            sqlite3_step(check.handle) == SQLITE_ROW
-        else { return false }
-        return check.text(0) == "ok"
+    private static func isCorrupt(_ code: Int32) -> Bool {
+        let primary = code & 0xff
+        return primary == SQLITE_CORRUPT || primary == SQLITE_NOTADB
     }
 
-    private static func moveAside(_ url: URL) {
+    private static func moveAside(_ url: URL) -> Bool {
         let files = FileManager.default
-        guard files.fileExists(atPath: url.path) else { return }
-        var destination = url.appendingPathExtension("corrupt")
-        if files.fileExists(atPath: destination.path) {
-            destination = destination.appendingPathExtension(UUID().uuidString)
+        guard files.fileExists(atPath: url.path) else { return false }
+        let destination = url.appendingPathExtension("corrupt")
+        // A bounded recovery history: replace this store's prior corrupt backup and sidecars.
+        for suffix in ["", "-wal", "-shm"] {
+            let old = URL(fileURLWithPath: destination.path + suffix)
+            if files.fileExists(atPath: old.path) {
+                do { try files.removeItem(at: old) } catch { return false }
+            }
         }
-        guard (try? files.moveItem(at: url, to: destination)) != nil else { return }
+        do { try files.moveItem(at: url, to: destination) } catch { return false }
         for suffix in ["-wal", "-shm"] {
             let sidecar = URL(fileURLWithPath: url.path + suffix)
             if files.fileExists(atPath: sidecar.path) {
@@ -168,6 +190,18 @@ private final class UsageDatabase: @unchecked Sendable {
                     at: sidecar, to: URL(fileURLWithPath: destination.path + suffix))
             }
         }
+        // Clean backups made by the earlier UUID-suffixed recovery scheme as well.
+        let siblings =
+            (try? files.contentsOfDirectory(
+                at: url.deletingLastPathComponent(), includingPropertiesForKeys: [.isRegularFileKey]
+            )) ?? []
+        for old in siblings
+        where old.lastPathComponent.hasPrefix(destination.lastPathComponent + ".") {
+            if (try? old.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+                try? files.removeItem(at: old)
+            }
+        }
+        return true
     }
 }
 
@@ -177,10 +211,14 @@ public actor UsageStore {
     private let calendar: Calendar
     private let nowProvider: @Sendable () -> Date
     nonisolated let initialReports: [UsageRange: UsageReport]
-    nonisolated let initialRequestsLastHour: Int
+    private var models: Set<String>
+    private var lastPrunedAt: Date?
+    private var dataVersion: Int
+    private var pending: [UsageRecord] = []
+    private var collectionBeganAt: Date?
 
     public init(
-        url: URL?, calendar: Calendar = .current,
+        url: URL?, calendar: Calendar = .autoupdatingCurrent,
         now: @escaping @Sendable () -> Date = { Date() },
         initialRecords: [UsageRecord] = [], initialAccounts: [Account] = [],
         trackingSince: Date? = nil
@@ -196,9 +234,25 @@ public actor UsageStore {
                 "INSERT OR IGNORE INTO meta(key, value) VALUES ('tracking_since', ?)",
                 [.real(trackingSince.timeIntervalSince1970)])
         }
+        let cutoff = Self.bucketStart(current.addingTimeInterval(-31 * 86400)) ?? 0
+        var modelCache = Self.storedModels(database.handle, since: cutoff)
+        self.collectionBeganAt = Self.trackingDate(database.handle)
         if !initialRecords.isEmpty {
-            Self.ingest(initialRecords, database: database.handle, now: current)
+            let result = Self.attemptIngest(
+                initialRecords, database: database.handle, now: current,
+                trackingSince: self.collectionBeganAt ?? current,
+                models: modelCache, prune: true,
+                expectedVersion: Self.currentDataVersion(database.handle))
+            if case .committed(_, let updated) = result {
+                modelCache = updated
+                self.lastPrunedAt = current
+            } else {
+                self.pending = Array(Self.sanitized(initialRecords, now: current).suffix(5000))
+                self.collectionBeganAt = self.collectionBeganAt ?? current
+            }
         }
+        self.models = modelCache
+        self.dataVersion = Self.currentDataVersion(database.handle)
         initialReports = Dictionary(
             uniqueKeysWithValues: UsageRange.allCases.map { range in
                 (
@@ -208,30 +262,99 @@ public actor UsageStore {
                         database: database.handle)
                 )
             })
-        initialRequestsLastHour = Self.requests(
-            since: current.addingTimeInterval(-3600), database: database.handle)
     }
 
-    public func ingest(_ records: [UsageRecord]) {
-        Self.ingest(records, database: database.handle, now: nowProvider())
+    private enum IngestResult {
+        case committed(changed: Bool, models: Set<String>)
+        case failed(Int32)
     }
 
-    private static func ingest(_ records: [UsageRecord], database: OpaquePointer?, now: Date) {
-        guard now.timeIntervalSince1970.isFinite,
-            UsageDatabase.execute(database, "BEGIN IMMEDIATE")
-        else { return }
-        var committed = false
-        defer {
-            if !committed { _ = UsageDatabase.execute(database, "ROLLBACK") }
+    /// Returns whether committed data changed, allowing the model to avoid unchanged report queries.
+    @discardableResult public func ingest(_ records: [UsageRecord]) -> Bool {
+        let now = nowProvider()
+        guard now.timeIntervalSince1970.isFinite else { return false }
+        collectionBeganAt = collectionBeganAt ?? now
+        let combined = pending + Self.sanitized(records, now: now)
+        let prune = lastPrunedAt.map { now.timeIntervalSince($0) >= 3600 } ?? true
+        let version = Self.currentDataVersion(database.handle)
+        let externalChange = version != dataVersion
+        var modelCache = models
+        if externalChange, let cutoff = Self.bucketStart(now.addingTimeInterval(-31 * 86400)) {
+            modelCache = Self.storedModels(database.handle, since: cutoff)
         }
+        for attempt in 0..<2 {
+            let result = Self.attemptIngest(
+                combined, database: database.handle, now: now,
+                trackingSince: collectionBeganAt ?? now,
+                models: modelCache, prune: prune, expectedVersion: version)
+            switch result {
+            case .committed(let changed, let updated):
+                pending = []
+                models = updated
+                dataVersion = Self.currentDataVersion(database.handle)
+                if prune { lastPrunedAt = now }
+                return changed || externalChange
+            case .failed(let status):
+                if status & 0xff == SQLITE_BUSY, attempt == 0 { continue }
+                pending = Array(combined.suffix(5000))
+                return externalChange
+            }
+        }
+        return false
+    }
+
+    private static func sanitized(_ records: [UsageRecord], now: Date) -> [UsageRecord] {
+        records.compactMap { record in
+            let timestamp = record.timestamp ?? now
+            guard timestamp.timeIntervalSince1970.isFinite,
+                timestamp >= now.addingTimeInterval(-31 * 86400)
+            else { return nil }
+            let raw =
+                [record.model, record.alias].compactMap { $0 }.first { !$0.isEmpty } ?? "unknown"
+            var result = record
+            result.timestamp = min(timestamp, now)
+            result.model = String(raw.prefix(64))
+            result.alias = nil
+            result.authIndex = record.authIndex.map { String($0.prefix(64)) }
+            result.provider = record.provider.map { String($0.prefix(64)) }
+            return result
+        }
+    }
+
+    private static func attemptIngest(
+        _ records: [UsageRecord], database: OpaquePointer?, now: Date,
+        trackingSince: Date, models: Set<String>, prune: Bool, expectedVersion: Int
+    ) -> IngestResult {
+        guard let database else { return .failed(SQLITE_CANTOPEN) }
+        guard UsageDatabase.execute(database, "BEGIN IMMEDIATE") else {
+            return .failed(sqlite3_errcode(database))
+        }
+        var committed = false
+        defer { if !committed { _ = UsageDatabase.execute(database, "ROLLBACK") } }
         guard
             UsageDatabase.execute(
                 database,
                 "INSERT OR IGNORE INTO meta(key, value) VALUES ('tracking_since', ?)",
-                [.real(now.timeIntervalSince1970)]),
-            let oldest = bucketStart(now.addingTimeInterval(-31 * 86400)),
-            UsageDatabase.execute(
-                database, "DELETE FROM buckets WHERE start < ?", [.integer(oldest)]),
+                [.real(trackingSince.timeIntervalSince1970)])
+        else { return .failed(sqlite3_errcode(database)) }
+        var changed = sqlite3_changes(database) > 0
+        var modelCache = models
+        let externalChange = currentDataVersion(database) != expectedVersion
+        if !prune, externalChange, let oldest = bucketStart(now.addingTimeInterval(-31 * 86400)) {
+            modelCache = storedModels(database, since: oldest)
+            changed = true
+        }
+        if prune, let oldest = bucketStart(now.addingTimeInterval(-31 * 86400)) {
+            guard
+                UsageDatabase.execute(
+                    database, "DELETE FROM buckets WHERE start < ?", [.integer(oldest)])
+            else {
+                return .failed(sqlite3_errcode(database))
+            }
+            changed = changed || sqlite3_changes(database) > 0
+            modelCache = storedModels(database, since: oldest)
+        }
+        guard
             let upsert = UsageStatement(
                 database,
                 """
@@ -245,21 +368,18 @@ public actor UsageStore {
                     output = CASE WHEN output > 9223372036854775807 - excluded.output THEN 9223372036854775807 ELSE output + excluded.output END,
                     total = CASE WHEN total > 9223372036854775807 - excluded.total THEN 9223372036854775807 ELSE total + excluded.total END
                 """)
-        else { return }
-        var models = storedModels(database)
-        for record in records {
-            let timestamp = record.timestamp ?? now
-            guard timestamp.timeIntervalSince1970.isFinite,
-                timestamp >= now.addingTimeInterval(-31 * 86400),
-                let start = bucketStart(min(timestamp, now))
-            else { continue }
-            let rawModel =
-                [record.model, record.alias].compactMap { $0 }.first { !$0.isEmpty } ?? "unknown"
-            var model = String(rawModel.prefix(64))
-            if !models.contains(model), models.count >= (models.contains("other") ? 50 : 49) {
+        else { return .failed(sqlite3_errcode(database)) }
+        for record in sanitized(records, now: now) {
+            guard let timestamp = record.timestamp, let start = bucketStart(timestamp) else {
+                continue
+            }
+            var model = record.model ?? "unknown"
+            if !modelCache.contains(model),
+                modelCache.count >= (modelCache.contains("other") ? 200 : 199)
+            {
                 model = "other"
             }
-            models.insert(model)
+            modelCache.insert(model)
             let input = nonnegative(record.tokens?.inputTokens)
             let output = nonnegative(record.tokens?.outputTokens)
             let supplied = nonnegative(record.tokens?.totalTokens)
@@ -274,10 +394,19 @@ public actor UsageStore {
                 .integer(1), .integer(record.failed == true ? 1 : 0), .integer(Int64(input)),
                 .integer(Int64(output)), .integer(Int64(total)),
             ]
-            guard upsert.bind(values), upsert.run() else { return }
+            guard upsert.bind(values), upsert.run() else {
+                return .failed(sqlite3_errcode(database))
+            }
+            changed = true
         }
-        committed = UsageDatabase.execute(database, "COMMIT")
+        guard UsageDatabase.execute(database, "COMMIT") else {
+            return .failed(sqlite3_errcode(database))
+        }
+        committed = true
+        return .committed(changed: changed, models: modelCache)
     }
+
+    nonisolated func dayStart(now: Date) -> Date { calendar.startOfDay(for: now) }
 
     public func report(_ range: UsageRange, accounts: [Account], now: Date) -> UsageReport {
         Self.report(
@@ -297,7 +426,7 @@ public actor UsageStore {
         let accountQuery = UsageStatement(
             database,
             """
-            SELECT auth_index, MAX(provider), SUM(CAST(requests AS REAL)), SUM(CAST(failed AS REAL)),
+            SELECT auth_index, CASE WHEN auth_index = '' THEN '' ELSE MAX(provider) END, SUM(CAST(requests AS REAL)), SUM(CAST(failed AS REAL)),
                 SUM(CAST(input AS REAL)), SUM(CAST(output AS REAL)), SUM(CAST(total AS REAL))
             FROM buckets WHERE start >= ? AND start <= ? GROUP BY auth_index
             """)
@@ -306,10 +435,13 @@ public actor UsageStore {
             while sqlite3_step(query.handle) == SQLITE_ROW {
                 let index = query.text(0)
                 let known = accounts.first { $0.authIndex == index && !index.isEmpty }
-                let provider = known?.provider ?? Provider(raw: query.text(1))
+                let provider =
+                    index.isEmpty
+                    ? Provider.other("") : known?.provider ?? Provider(raw: query.text(1))
                 let label =
                     known?.label
-                    ?? (index.isEmpty ? "Unattributed" : provider.displayName + " API key")
+                    ?? (index.isEmpty
+                        ? "Unattributed" : provider.displayName + " account · " + index.suffix(4))
                 byAccount.append(
                     AccountUsage(
                         authIndex: index.isEmpty ? nil : index,
@@ -361,26 +493,17 @@ public actor UsageStore {
             trackingSince: trackingSince)
     }
 
-    /// Counts include the quarter-hour bucket containing the requested boundary.
-    public func requests(since: Date) -> Int {
-        Self.requests(since: since, database: database.handle)
-    }
-
-    private static func requests(since: Date, database: OpaquePointer?) -> Int {
-        guard let start = bucketStart(since),
-            let query = UsageStatement(
-                database, "SELECT SUM(CAST(requests AS REAL)) FROM buckets WHERE start >= ?"),
-            query.bind([.integer(start)]), sqlite3_step(query.handle) == SQLITE_ROW
-        else { return 0 }
-        return query.count(0)
-    }
-
     public func reset() {
         guard UsageDatabase.execute(database.handle, "BEGIN IMMEDIATE") else { return }
         if UsageDatabase.execute(database.handle, "DELETE FROM buckets"),
             UsageDatabase.execute(database.handle, "DELETE FROM meta"),
             UsageDatabase.execute(database.handle, "COMMIT")
         {
+            models = []
+            pending = []
+            lastPrunedAt = nil
+            collectionBeganAt = nil
+            dataVersion = Self.currentDataVersion(database.handle)
             return
         }
         _ = UsageDatabase.execute(database.handle, "ROLLBACK")
@@ -398,8 +521,19 @@ public actor UsageStore {
         return seconds.isFinite ? Date(timeIntervalSince1970: seconds) : nil
     }
 
-    private static func storedModels(_ database: OpaquePointer?) -> Set<String> {
-        guard let query = UsageStatement(database, "SELECT DISTINCT model FROM buckets") else {
+    private static func currentDataVersion(_ database: OpaquePointer?) -> Int {
+        guard let query = UsageStatement(database, "PRAGMA data_version"),
+            sqlite3_step(query.handle) == SQLITE_ROW
+        else { return 0 }
+        return Int(sqlite3_column_int(query.handle, 0))
+    }
+
+    private static func storedModels(_ database: OpaquePointer?, since: Int64) -> Set<String> {
+        guard
+            let query = UsageStatement(
+                database, "SELECT DISTINCT model FROM buckets WHERE start >= ?"),
+            query.bind([.integer(since)])
+        else {
             return []
         }
         var result: Set<String> = []

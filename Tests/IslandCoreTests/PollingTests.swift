@@ -39,7 +39,7 @@ private actor QuotaTransport: HTTPTransport {
     let transport = QuotaTransport()
     let model = IslandModel(
         keyStore: InMemoryKeyStore(key: "fake-key"), defaults: VolatileDefaults(),
-        aggregator: UsageAggregator(persistenceURL: nil),
+        store: UsageStore(url: nil),
         clientFactory: { ManagementClient(baseURL: $0, key: $1, transport: transport) })
     model.start()
     for _ in 0..<1000 {
@@ -77,7 +77,7 @@ private actor QuotaTransport: HTTPTransport {
     let transport = QuotaTransport()
     let model = IslandModel(
         keyStore: InMemoryKeyStore(key: "fake-key"), defaults: VolatileDefaults(),
-        aggregator: UsageAggregator(persistenceURL: nil),
+        store: UsageStore(url: nil),
         clientFactory: { ManagementClient(baseURL: $0, key: $1, transport: transport) }
     )
     model.start()

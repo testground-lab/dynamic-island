@@ -137,20 +137,81 @@ public struct ModelUsage: Identifiable, Hashable, Sendable {
     }
 }
 
-public struct UsageSummary: Hashable, Sendable {
-    /// Sorted by totalTokens desc, then requests desc.
-    public var lastHour: [ModelUsage]
-    public var today: [ModelUsage]
-    /// When the app started collecting (usage is only visible from then on).
+public enum UsageRange: String, CaseIterable, Hashable, Sendable {
+    case today, week, month
+
+    public var title: String {
+        switch self {
+        case .today: "Today"
+        case .week: "7d"
+        case .month: "30d"
+        }
+    }
+
+    public func start(now: Date, calendar: Calendar) -> Date {
+        let today = calendar.startOfDay(for: now)
+        let days = self == .today ? 0 : self == .week ? -6 : -29
+        return calendar.date(byAdding: .day, value: days, to: today) ?? today
+    }
+}
+
+public struct UsageTotals: Hashable, Sendable {
+    public var requests: Int
+    public var failed: Int
+    public var inputTokens: Int
+    public var outputTokens: Int
+    public var totalTokens: Int
+
+    public init(
+        requests: Int = 0, failed: Int = 0, inputTokens: Int = 0,
+        outputTokens: Int = 0, totalTokens: Int = 0
+    ) {
+        self.requests = requests
+        self.failed = failed
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.totalTokens = totalTokens
+    }
+
+    public static let zero = UsageTotals()
+}
+
+public struct AccountUsage: Identifiable, Hashable, Sendable {
+    public var id: String { authIndex ?? "unattributed" }
+    public var authIndex: String?
+    public var provider: Provider
+    public var label: String
+    public var totals: UsageTotals
+
+    public init(authIndex: String?, provider: Provider, label: String, totals: UsageTotals) {
+        self.authIndex = authIndex
+        self.provider = provider
+        self.label = label
+        self.totals = totals
+    }
+}
+
+public struct UsageReport: Hashable, Sendable {
+    public var range: UsageRange
+    public var start: Date
+    public var totals: UsageTotals
+    public var byAccount: [AccountUsage]
+    public var byModel: [ModelUsage]
     public var trackingSince: Date?
 
-    public init(lastHour: [ModelUsage], today: [ModelUsage], trackingSince: Date?) {
-        self.lastHour = lastHour
-        self.today = today
+    public init(
+        range: UsageRange, start: Date, totals: UsageTotals = .zero,
+        byAccount: [AccountUsage] = [], byModel: [ModelUsage] = [], trackingSince: Date? = nil
+    ) {
+        self.range = range
+        self.start = start
+        self.totals = totals
+        self.byAccount = byAccount
+        self.byModel = byModel
         self.trackingSince = trackingSince
     }
 
-    public static let empty = UsageSummary(lastHour: [], today: [], trackingSince: nil)
+    public var isPartial: Bool { trackingSince.map { $0 > start } ?? true }
 }
 
 public enum ConnectionState: Hashable, Sendable {

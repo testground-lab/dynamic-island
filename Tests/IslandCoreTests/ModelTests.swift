@@ -34,7 +34,7 @@ final class VolatileDefaults: UserDefaults, @unchecked Sendable {
     let defaults = VolatileDefaults()
     defaults.set(false, forKey: "liveQuotaEnabled")
     let model = IslandModel(
-        keyStore: store, defaults: defaults, aggregator: UsageAggregator(persistenceURL: nil),
+        keyStore: store, defaults: defaults, store: UsageStore(url: nil),
         clientFactory: { ManagementClient(baseURL: $0, key: $1, transport: stub) })
     #expect(!model.hasKey)
     #expect(model.connection == .needsKey)
@@ -63,7 +63,7 @@ final class VolatileDefaults: UserDefaults, @unchecked Sendable {
     defaults.set(false, forKey: "liveQuotaEnabled")
     let model = IslandModel(
         keyStore: InMemoryKeyStore(key: "test"), defaults: defaults,
-        aggregator: UsageAggregator(persistenceURL: nil),
+        store: UsageStore(url: nil),
         clientFactory: { ManagementClient(baseURL: $0, key: $1, transport: stub) })
     model.start()
     await waitUntil { model.lastUpdated != nil }
@@ -83,7 +83,7 @@ final class VolatileDefaults: UserDefaults, @unchecked Sendable {
     defaults.set(false, forKey: "liveQuotaEnabled")
     let model = IslandModel(
         keyStore: InMemoryKeyStore(key: "test"), defaults: defaults,
-        aggregator: UsageAggregator(persistenceURL: nil),
+        store: UsageStore(url: nil),
         clientFactory: { ManagementClient(baseURL: $0, key: $1, transport: stub) })
     #expect(!model.applyBaseURL("http://example.com"))
     #expect(model.applyBaseURL(" http://localhost:8317/ "))
@@ -99,7 +99,7 @@ final class VolatileDefaults: UserDefaults, @unchecked Sendable {
 @MainActor @Test func demoIsImmediateAndFutureDated() {
     let model = IslandModel.demo()
     #expect(model.accounts.count == 5)
-    #expect(model.usage.today.count == 3)
+    #expect(model.usageReports[.month]?.byModel.count == 4)
     #expect(model.accounts.first?.bindingWindow?.resetsAt ?? .distantPast > Date())
     #expect(model.requestsLastHour == 156)
     if case .connected = model.connection {} else { Issue.record("Demo should be connected") }

@@ -33,10 +33,10 @@ import Testing
     defaults.set(false, forKey: "liveQuotaEnabled")
     let model = IslandModel(
         keyStore: InMemoryKeyStore(key: "fake"), defaults: defaults,
-        aggregator: UsageAggregator(persistenceURL: nil),
+        store: UsageStore(url: nil),
         clientFactory: { ManagementClient(baseURL: $0, key: $1, transport: stub) })
     model.start()
-    await waitForState { model.accounts.count == 5 }
+    await waitForState { model.lastUpdated != nil }
     if case .connected = model.connection {
     } else {
         Issue.record("Expected account polling success")
@@ -57,17 +57,17 @@ func failedQueueKeepsPriorUsageAvailabilityAndSummary(_ available: Bool) async {
     defaults.set(false, forKey: "liveQuotaEnabled")
     let model = IslandModel(
         keyStore: InMemoryKeyStore(key: "fake"), defaults: defaults,
-        aggregator: UsageAggregator(persistenceURL: nil),
+        store: UsageStore(url: nil),
         clientFactory: { ManagementClient(baseURL: $0, key: $1, transport: stub) })
     model.start()
     await waitForState { model.lastUpdated != nil }
-    let usage = model.usage
+    let usage = model.usageReports
     let previous = model.lastUpdated
     model.refreshNow()
     await waitForState { model.lastUpdated != previous }
     #expect(model.usageAvailable == available)
-    #expect(model.usage == usage)
-    if available { #expect(usage.today.count == 3) }
+    #expect(model.usageReports == usage)
+    if available { #expect(usage[.today]?.byModel.count == 3) }
     if case .connected = model.connection {
     } else {
         Issue.record("Expected successful account polling")
@@ -79,7 +79,7 @@ func failedQueueKeepsPriorUsageAvailabilityAndSummary(_ available: Bool) async {
     let transport = StubTransport([])
     let model = IslandModel(
         keyStore: InMemoryKeyStore(), defaults: VolatileDefaults(),
-        aggregator: UsageAggregator(persistenceURL: nil),
+        store: UsageStore(url: nil),
         clientFactory: { ManagementClient(baseURL: $0, key: $1, transport: transport) })
     #expect(model.connection == .needsKey)
     try model.saveKey("fake")
@@ -125,7 +125,7 @@ private actor FailingLiveTransport: HTTPTransport {
     let clock = TestClock()
     let model = IslandModel(
         keyStore: InMemoryKeyStore(key: "fake"), defaults: VolatileDefaults(),
-        aggregator: UsageAggregator(persistenceURL: nil),
+        store: UsageStore(url: nil),
         clientFactory: { ManagementClient(baseURL: $0, key: $1, transport: transport) },
         now: { clock.now() })
     model.start()
@@ -170,23 +170,24 @@ func tlsFailuresAreNotProxyDown(_ code: URLError.Code) async {
     ])
     let model = IslandModel(
         keyStore: InMemoryKeyStore(key: "fake"), defaults: VolatileDefaults(),
-        aggregator: UsageAggregator(persistenceURL: nil),
+        store: UsageStore(url: nil),
         clientFactory: { ManagementClient(baseURL: $0, key: $1, transport: transport) })
     model.start()
     await waitForState { model.connection == .failed("TLS error") }
     model.stop()
 }
 
-@Test @MainActor func demoUsesTheProductionUsageAggregator() async throws {
-    let records = try JSONDecoder().decode(UsageQueueBatch.self, from: Fixtures.data("usage-queue"))
-        .records
-    let reference = Fixtures.referenceNow
-    let aggregator = UsageAggregator(persistenceURL: nil, now: { reference })
-    await aggregator.ingest(records)
-    let expected = await aggregator.summary(now: reference)
+@Test @MainActor func demoUsesAttributedThirtyDayHistory() {
     let demo = IslandModel.demo()
-    #expect(demo.usage.lastHour == expected.lastHour)
-    #expect(demo.usage.today == expected.today)
+    #expect(demo.usageReports.count == 3)
+    #expect(demo.usageReports[.month]?.totals.requests == 30)
+    #expect(demo.usageReports[.month]?.byModel.count == 4)
+    #expect(
+        demo.usageReports[.month]?.byAccount.contains { $0.id == "fake-config-api-key" } == true)
+    #expect(demo.usageReports[.month]?.isPartial == true)
+    #expect(demo.usageReports[.week]?.isPartial == false)
+    #expect(demo.usageReports[.today]?.isPartial == false)
+    #expect((demo.usageReports[.today]?.totals.requests ?? 0) > 0)
 }
 
 private final class RedirectRequests: @unchecked Sendable {

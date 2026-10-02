@@ -3,7 +3,8 @@ import Observation
 
 @MainActor @Observable public final class IslandModel {
     public private(set) var accounts: [Account] = []
-    public private(set) var usage: UsageSummary = .empty
+    public private(set) var usageReports: [UsageRange: UsageReport] = [:]
+    private var storedRequestsLastHour = 0
     public private(set) var connection: ConnectionState = .connecting
     public private(set) var lastUpdated: Date?
     public private(set) var usageAvailable = true
@@ -17,7 +18,7 @@ import Observation
     public private(set) var hasKey: Bool
     @ObservationIgnored private let keyStore: any KeyStore
     @ObservationIgnored private let defaults: UserDefaults
-    @ObservationIgnored private let aggregator: UsageAggregator
+    @ObservationIgnored private let store: UsageStore
     @ObservationIgnored private let nowProvider: @Sendable () -> Date
     @ObservationIgnored private let clientFactory: @Sendable (URL, String) -> ManagementClient
     @ObservationIgnored private var task: Task<Void, Never>?
@@ -29,7 +30,7 @@ import Observation
     @ObservationIgnored private var isDemo = false
 
     public init(
-        keyStore: any KeyStore, defaults: UserDefaults = .standard, aggregator: UsageAggregator,
+        keyStore: any KeyStore, defaults: UserDefaults = .standard, store: UsageStore,
         clientFactory: @escaping @Sendable (URL, String) -> ManagementClient = {
             ManagementClient(baseURL: $0, key: $1)
         },
@@ -37,7 +38,9 @@ import Observation
     ) {
         self.keyStore = keyStore
         self.defaults = defaults
-        self.aggregator = aggregator
+        self.store = store
+        self.usageReports = store.initialReports
+        self.storedRequestsLastHour = store.initialRequestsLastHour
         self.clientFactory = clientFactory
         self.nowProvider = now
         baseURLString = defaults.string(forKey: "baseURL") ?? BaseURLValidator.defaultBaseURL
@@ -88,7 +91,8 @@ import Observation
         hasKey = false
         connection = .needsKey
         accounts = []
-        usage = .empty
+        usageReports = [:]
+        storedRequestsLastHour = 0
         lastUpdated = nil
         live = [:]
         liveAttempts = [:]
@@ -115,8 +119,7 @@ import Observation
     /// Neither undercounts the other's blind spot, so take the larger.
     public var requestsLastHour: Int {
         let fromAccounts = accounts.reduce(0) { addingCounts($0, $1.requestsLastHour) }
-        let fromUsage = usage.lastHour.reduce(0) { addingCounts($0, $1.requests) }
-        return max(fromAccounts, fromUsage)
+        return max(fromAccounts, storedRequestsLastHour)
     }
     private func poll(generation current: Int) async -> Bool {
         do {
@@ -131,17 +134,19 @@ import Observation
             }
             hasKey = true
             let client = clientFactory(url, key)
+            await store.ingest([])
             // Drain first: its short-lived queue must not wait for slow live quota calls.
             let drain: UsageDrainResult?
             do {
                 drain = try await client.drainUsageQueueResult()
-                if let drain { await aggregator.ingest(drain.records) }
+
             } catch ManagementError.unauthorized {
                 throw ManagementError.unauthorized
             } catch {
                 guard !Task.isCancelled else { throw CancellationError() }
                 drain = nil
             }
+            if let drain, !drain.records.isEmpty { await store.ingest(drain.records) }
             let response = try await client.authFiles()
             guard generation == current, !Task.isCancelled else { return false }
             let now = nowProvider()
@@ -149,12 +154,11 @@ import Observation
             pruneLive(for: response.files)
             accounts = AccountMapper.accounts(
                 from: response, live: liveQuotaEnabled ? live : [:], now: now)
-            if let drain {
-                let summary = await aggregator.summary(now: now)
-                guard generation == current, !Task.isCancelled else { return false }
-                usage = summary
-                usageAvailable = drain.available
-            }
+            let snapshot = await usageSnapshot(accounts: accounts, now: now)
+            guard generation == current, !Task.isCancelled else { return false }
+            usageReports = snapshot.0
+            storedRequestsLastHour = snapshot.1
+            if let drain { usageAvailable = drain.available }
             lastUpdated = now
             connection = .connected(at: now)
             if liveQuotaEnabled && liveTask == nil {
@@ -178,9 +182,24 @@ import Observation
             case .tls: connection = .failed("TLS error")
             case nil: connection = .failed("Unable to read management key")
             }
+            let snapshot = await usageSnapshot(accounts: accounts, now: nowProvider())
+            guard generation == current, !Task.isCancelled else { return false }
+            usageReports = snapshot.0
+            storedRequestsLastHour = snapshot.1
             return true
         }
     }
+    private func usageSnapshot(accounts: [Account], now: Date) async -> (
+        [UsageRange: UsageReport], Int
+    ) {
+        var reports: [UsageRange: UsageReport] = [:]
+        for range in UsageRange.allCases {
+            reports[range] = await store.report(range, accounts: accounts, now: now)
+        }
+        let requests = await store.requests(since: now.addingTimeInterval(-3600))
+        return (reports, requests)
+    }
+
     private func fetchLive(
         _ files: [AuthFile], client: ManagementClient, now: Date, generation current: Int
     ) async {
@@ -235,43 +254,45 @@ import Observation
     }
 
     public static func demo() -> IslandModel {
-        // Dedicated volatile defaults and in-memory key store: no credentials or network.
-        let defaults = UserDefaults(suiteName: "dev.ksotis.dynamic-island.demo") ?? .standard
         let now = Date()
         let reference = Fixtures.referenceNow
-        let records =
-            (try? JSONDecoder().decode(
-                UsageQueueBatch.self, from: Fixtures.data("usage-queue")))?.records ?? []
-        let aggregator = UsageAggregator(
-            persistenceURL: nil, now: { reference }, initialRecords: records)
-        let model = IslandModel(
-            keyStore: InMemoryKeyStore(), defaults: defaults, aggregator: aggregator)
-        model.isDemo = true
         let shift = now.timeIntervalSince(reference)
-        if let response = try? JSONDecoder().decode(
-            AuthFilesResponse.self, from: Fixtures.data("auth-files"))
-        {
-            model.accounts = AccountMapper.accounts(from: response, live: [:], now: reference).map {
-                account in
-                var a = account
-                a.windows = a.windows.map { window in
-                    var w = window
-                    w.resetsAt = w.resetsAt?.addingTimeInterval(shift)
-                    return w
-                }
-                switch a.quotaSource {
-                case .headers(let observed):
-                    a.quotaSource = .headers(observedAt: observed.addingTimeInterval(shift))
-                default: break
-                }
-                if case .rateLimited(let until, let reason) = a.health {
-                    a.health = .rateLimited(until: until?.addingTimeInterval(shift), reason: reason)
-                }
-                return a
+        let response =
+            (try? JSONDecoder().decode(
+                AuthFilesResponse.self, from: Fixtures.data("auth-files"))) ?? AuthFilesResponse()
+        let accounts = AccountMapper.accounts(from: response, live: [:], now: reference).map {
+            account in
+            var result = account
+            result.windows = result.windows.map { window in
+                var shifted = window
+                shifted.resetsAt = shifted.resetsAt?.addingTimeInterval(shift)
+                return shifted
             }
+            if case .headers(let observed) = result.quotaSource {
+                result.quotaSource = .headers(observedAt: observed.addingTimeInterval(shift))
+            }
+            if case .rateLimited(let until, let reason) = result.health {
+                result.health = .rateLimited(
+                    until: until?.addingTimeInterval(shift), reason: reason)
+            }
+            return result
         }
-        model.usage = aggregator.initialSummary
-        model.usage.trackingSince = model.usage.trackingSince?.addingTimeInterval(shift)
+        let records =
+            ((try? JSONDecoder().decode(
+                UsageQueueBatch.self, from: Fixtures.data("usage-history")))?.records ?? []).map {
+                record in
+                var shifted = record
+                shifted.timestamp = record.timestamp?.addingTimeInterval(shift)
+                return shifted
+            }
+        let trackingSince = Calendar.current.date(byAdding: .day, value: -20, to: now)
+        let store = UsageStore(
+            url: nil, now: { now }, initialRecords: records,
+            initialAccounts: accounts, trackingSince: trackingSince)
+        let defaults = UserDefaults(suiteName: "dev.ksotis.dynamic-island.demo") ?? .standard
+        let model = IslandModel(keyStore: InMemoryKeyStore(), defaults: defaults, store: store)
+        model.isDemo = true
+        model.accounts = accounts
         model.connection = .connected(at: now)
         model.lastUpdated = now
         return model

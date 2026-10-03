@@ -11,7 +11,7 @@ On displays without a notch it lives in the menu bar.
 swift build && swift test
 swift run DynamicIsland            # real mode: paste the management key in Settings (stored in Keychain)
 swift run DynamicIsland --demo     # bundled fixtures, no network
-swift run DynamicIsland --demo --page jev --range halfYear   # start on the Jev page, 6m range
+swift run DynamicIsland --demo --page jev --range month   # start on the Jev page, 30d range
 swift run DynamicIsland --snapshot /tmp/shots   # render demo PNGs and exit
 scripts/bundle.sh                  # build/DynamicIsland.app (needed for launch at login)
 ```
@@ -30,18 +30,18 @@ Both pages offer Today / 7d / 30d / 6m; 6m shows 26 weekly bars. "Open on hover"
 - `GET /v0/management/usage-queue`: per-request records, drained every 15 s and aggregated into
   `~/Library/Application Support/DynamicIsland/usage.sqlite` (15-minute buckets per account and model, kept 183 days;
   no API keys, IPs or user agents are stored). The prune is skipped while the clock is more than 2 days past the newest
-  stored usage, so a clock briefly set far ahead doesn't wipe the history (see context/decisions/0013).
+  stored usage, so a clock set far ahead can't wipe the history on its first prune (see context/decisions/0013).
 
 **The usage queue is a destructive read.** The proxy keeps each record about 60 seconds and gives it to the first
 reader. If the CLIProxyAPI web panel or another tool reads the queue at the same time, records are split between
-them and every reader undercounts. Usage before the app started is not available ("tracking since" in the UI).
+them and every reader undercounts. Usage before the app started is not available ("recorded since" in the UI).
 
 ## Jev
 
-The Jev page counts calls made through the jev-model-router hook, a separate Claude Code hook (not part of this repo)
-that calls Jev and logs each call. It shows tokens in and out, requests, failed calls and late ones (answered after the
-hook's timeout, still billed, so counted in tokens and spend), and an estimated spend of $0.042 per 1M input tokens
-(output is free at the moment; the rate is `JevPricing` in `Sources/IslandCore/JevUsage.swift`).
+The Jev page counts calls to Jev (TypeSafe's model) made through the jev-model-router hook, a separate Claude Code hook
+(not part of this repo) that calls Jev and logs each call. It shows tokens in and out, requests, failed calls and late
+ones (answered after the router's timeout, still billed, so counted in tokens and spend), and an estimated spend of
+$0.042 per 1M input tokens (output is free at the moment; the rate is `JevPricing` in `Sources/IslandCore/JevUsage.swift`).
 
 It reads the hook's per-session logs, `~/.claude/jev-model-router/usage-*.jsonl` (one JSON line per call), every 10 s,
 read-only. Without the hook the page says nothing has been logged yet; calls made before the hook started logging,

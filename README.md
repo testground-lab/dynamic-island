@@ -22,6 +22,7 @@ Click the notch (or swipe down on it with two fingers) to open; click elsewhere,
 Inside there are two pages: **AI usage** (Limits, then Usage; scroll to see more) and **Jev**. Switch with a two-finger
 sideways swipe or by clicking the page dots next to the title; the menu-bar popover has the same pages.
 Both pages offer Today / 7d / 30d / 6m; 6m shows 26 weekly bars. "Open on hover" is available in Settings.
+Settings › Pages turns each page on or off; one always stays on, and a hidden page keeps collecting data in the background.
 
 ## Data
 

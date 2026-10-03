@@ -6,6 +6,7 @@ import IslandCore
 ///   --expanded  keep the island expanded
 ///   --menubar   force the menu-bar fallback even on a notched display
 ///   --page jev  open on the Jev page
+///   --range <today|week|month|halfYear>  start both pages on this range
 ///   --jev-dir <dir>  read Jev usage logs from this folder instead of the router's (also with --demo)
 ///   --snapshot <dir>  render demo PNGs and exit
 @MainActor
@@ -55,6 +56,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         jev.start()
         if let page = Self.value(after: "--page").flatMap(DashboardPage.init(rawValue:)) { selection.page = page }
+        if let range = Self.value(after: "--range").flatMap(UsageRange.init(rawValue:)) {
+            selection.usageRange = range
+            selection.jevRange = range
+        }
         settings = SettingsWindowController(model: model)
 
         layoutForScreens()

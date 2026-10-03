@@ -7,7 +7,7 @@
 The usage queue is a destructive read with ~60 s retention; 7d/30d need local history.
 
 ## Decision
-Drain the queue every 15 s and aggregate into `~/Library/Application Support/DynamicIsland/usage.sqlite`: 15-min buckets keyed by (start, auth_index, model) with provider and counts, kept 31 days. Never store client API keys, IPs, user agents or response headers. 'Tracking since' marks where history starts; failed writes are kept as bounded aggregates.
+Drain the queue every 15 s and aggregate into `~/Library/Application Support/DynamicIsland/usage.sqlite`: 15-min buckets keyed by (start, auth_index, model) with provider and counts, kept 31 days (now 183 days, see 0013). Never store client API keys, IPs, user agents or response headers. 'Tracking since' marks where history starts; failed writes are kept as bounded aggregates.
 
 ## Alternatives considered
 In-memory/JSON aggregates (lost history, no accounts); raw records (privacy).

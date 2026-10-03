@@ -28,7 +28,9 @@ private final class RetentionConnection {
 
   init(_ url: URL, create: Bool = false) throws {
     var opened: OpaquePointer?
-    let flags = create ? SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE : SQLITE_OPEN_READONLY
+    // Read-write even for counting: a read-only connection can't open a WAL database
+    // whose -shm file doesn't exist yet (e.g. a fresh copy of the real one).
+    let flags = create ? SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE : SQLITE_OPEN_READWRITE
     guard sqlite3_open_v2(url.path, &opened, flags, nil) == SQLITE_OK, let opened else {
       if let opened { sqlite3_close_v2(opened) }
       throw RetentionTestError.sqlite
@@ -115,11 +117,21 @@ private func seedRetentionDatabase(_ url: URL, now: Date, ages: [Int]) throws {
   }
 }
 
-// DI_DB_COPY must point to a disposable COPY: this test intentionally prunes that file.
+// DI_DB_COPY names a database to check, e.g. a copy of a real one. The test copies it
+// (with any -wal/-shm) into a temporary folder and prunes only that copy; it refuses the
+// app's live database outright.
 @Test(.enabled(if: ProcessInfo.processInfo.environment["DI_DB_COPY"] != nil))
 func realDatabaseCopyPrunesOnlyBucketsOlderThanRetention() async throws {
   let path = try #require(ProcessInfo.processInfo.environment["DI_DB_COPY"])
-  let url = URL(fileURLWithPath: path)
+  let source = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+  try #require(!source.path.contains("Application Support/DynamicIsland"))
+  let url = try retentionDatabaseURL()
+  defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+  for suffix in ["", "-wal", "-shm"] {
+    let file = URL(fileURLWithPath: source.path + suffix)
+    guard FileManager.default.fileExists(atPath: file.path) else { continue }
+    try FileManager.default.copyItem(at: file, to: URL(fileURLWithPath: url.path + suffix))
+  }
   let now = Date()
   let cutoff = retentionBucketStart(now.addingTimeInterval(-UsageStore.retention))
   let connection = try RetentionConnection(url)
@@ -153,4 +165,21 @@ func realDatabaseCopyPrunesOnlyBucketsOlderThanRetention() async throws {
   #expect(try connection.count("SELECT COUNT(*) FROM buckets") == 2)
   #expect(try connection.count("SELECT COUNT(*) FROM buckets WHERE start = \(cutoff)") == 1)
   #expect(try connection.count("SELECT COUNT(*) FROM buckets WHERE start < \(cutoff)") == 0)
+}
+
+/// The 6m range must never reach past what is kept, or its first week would be partly pruned.
+@Test(arguments: [1, 2], ["UTC", "America/New_York", "Australia/Lord_Howe", "Pacific/Kiritimati"])
+func halfYearRangeStaysInsideRetention(_ firstWeekday: Int, _ zone: String) throws {
+  var calendar = Calendar(identifier: .gregorian)
+  calendar.timeZone = try #require(TimeZone(identifier: zone))
+  calendar.firstWeekday = firstWeekday
+  var day = try #require(calendar.date(from: DateComponents(year: 2026, month: 1, day: 1)))
+  for _ in 0..<366 {
+    let lastMinute = try #require(calendar.date(bySettingHour: 23, minute: 59, second: 59, of: day))
+    for now in [day, lastMinute] {
+      let start = UsageRange.halfYear.start(now: now, calendar: calendar)
+      #expect(start >= now.addingTimeInterval(-UsageStore.retention))
+    }
+    day = try #require(calendar.date(byAdding: .day, value: 1, to: day))
+  }
 }

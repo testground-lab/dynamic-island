@@ -532,18 +532,11 @@ public actor UsageStore {
         Self.seriesAll(now: now, calendar: calendar, database: database.handle)
     }
 
-    private struct SeriesRow {
-        let start: Date
-        let provider: Provider
-        let totals: UsageTotals
-    }
-
     private static func seriesRows(
         _ range: UsageRange, now: Date, calendar: Calendar, database: OpaquePointer?
-    ) -> [SeriesRow] {
-        guard let end = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)),
-            let lower = bucketStart(range.start(now: now, calendar: calendar)),
-            let upper = bucketStart(end),
+    ) -> [UsageSeries.Entry] {
+        guard let lower = bucketStart(range.start(now: now, calendar: calendar)),
+            let upper = bucketStart(range.chartEnd(now: now, calendar: calendar)),
             let query = UsageStatement(database, """
                 SELECT start, provider, SUM(CAST(requests AS REAL)), SUM(CAST(failed AS REAL)),
                     SUM(CAST(input AS REAL)), SUM(CAST(output AS REAL)), SUM(CAST(total AS REAL))
@@ -551,9 +544,9 @@ public actor UsageStore {
                 """),
             query.bind([.integer(lower), .integer(upper)])
         else { return [] }
-        var rows: [SeriesRow] = []
+        var rows: [UsageSeries.Entry] = []
         while sqlite3_step(query.handle) == SQLITE_ROW {
-            rows.append(SeriesRow(
+            rows.append(UsageSeries.Entry(
                 start: Date(timeIntervalSince1970: sqlite3_column_double(query.handle, 0)),
                 provider: Provider(raw: query.text(1)), totals: query.totals(2)))
         }
@@ -580,11 +573,9 @@ public actor UsageStore {
     }
 
     private static func series(
-        _ range: UsageRange, now: Date, calendar: Calendar, rows: [SeriesRow], trackingSince: Date?
+        _ range: UsageRange, now: Date, calendar: Calendar, rows: [UsageSeries.Entry], trackingSince: Date?
     ) -> UsageSeries {
-        UsageSeries.binned(
-            range, entries: rows.map { .init(start: $0.start, provider: $0.provider, totals: $0.totals) },
-            now: now, calendar: calendar, trackingSince: trackingSince)
+        UsageSeries.binned(range, entries: rows, now: now, calendar: calendar, trackingSince: trackingSince)
     }
 
     private static func report(

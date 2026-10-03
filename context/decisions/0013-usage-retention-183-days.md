@@ -13,4 +13,4 @@ Requirement 17 adds a 6-month range; 31 days of 15-minute buckets can't fill it.
 Separate daily roll-up table for old data (more code, a migration); 31 days with 6m partly "not recorded" (useless range).
 
 ## Consequences
-The database grows up to ~6x (15-minute buckets per account and model, only where there was traffic). 6m reports query more rows; still grouped in SQL. The first months after upgrading show "not recorded" before tracking began, as before.
+The database grows up to ~6x (15-minute buckets per account and model, only where there was traffic). 6m reports query more rows; still grouped in SQL. The first months after upgrading show "not recorded" before tracking began, as before. The model list behind the 200-model "other" fold now spans 183 days, so the fold is reached sooner. A clock set months ahead would prune by the wrong "now", as before; the larger window makes that worse but it stays out of scope.

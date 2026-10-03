@@ -5,6 +5,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Bindable var model: IslandModel
+    let selection: DashboardSelection
     @State private var keyDraft = ""
     @State private var baseURLDraft = ""
     @State private var message: (text: String, isError: Bool)?
@@ -55,6 +56,17 @@ struct SettingsView: View {
                         Text(statusText)
                     }
                 }
+            }
+
+            Section("Pages") {
+                ForEach(DashboardPage.allCases, id: \.self) { page in
+                    Toggle(page.title, isOn: Binding(get: { selection.pages.isEnabled(page) },
+                                                     set: { selection.setEnabled(page, $0) }))
+                        .disabled(selection.pages.isLocked(page))
+                }
+                Text("Hidden pages keep collecting data in the background. One page always stays on.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Behavior") {
@@ -202,8 +214,12 @@ enum LaunchAtLogin {
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private let model: IslandModel
+    private let selection: DashboardSelection
 
-    init(model: IslandModel) { self.model = model }
+    init(model: IslandModel, selection: DashboardSelection) {
+        self.model = model
+        self.selection = selection
+    }
 
     func windowWillClose(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -211,7 +227,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     func show() {
         if window == nil {
-            let hosting = NSHostingController(rootView: SettingsView(model: model))
+            let hosting = NSHostingController(rootView: SettingsView(model: model, selection: selection))
             hosting.sizingOptions = [.preferredContentSize]
             let window = NSWindow(contentViewController: hosting)
             window.title = "Dynamic Island Settings"

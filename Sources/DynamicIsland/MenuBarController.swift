@@ -55,8 +55,7 @@ final class MenuBarController: NSObject {
                                            precise: event.hasPreciseScrollingDeltas,
                                            expanded: true, verticalAllowed: false)
             guard let action, action == .nextPage || action == .previousPage else { return event }
-            let target = self.selection.page.applying(action)
-            if target != self.selection.page { withAnimation(Theme.page) { self.selection.page = target } }
+            _ = self.selection.apply(action)
             return nil
         }
     }
@@ -128,7 +127,7 @@ final class MenuBarController: NSObject {
 struct PopoverDashboard: View {
     let model: IslandModel
     let jev: JevUsageMonitor
-    @Bindable var selection: DashboardSelection
+    let selection: DashboardSelection
     var snapshotOffset: CGFloat?
     var openSettings: () -> Void
 
@@ -136,7 +135,7 @@ struct PopoverDashboard: View {
     static let padding: CGFloat = 12
 
     var body: some View {
-        DashboardView(model: model, jev: jev, page: $selection.page, range: $selection.usageRange, jevRange: $selection.jevRange,
+        DashboardView(model: model, jev: jev, selection: selection,
                       headerHeight: Self.headerHeight,
                       pageHeight: PageSizing.viewport(total: Theme.openHeight, header: Self.headerHeight,
                                                       spacing: DashboardMetrics.spacing, chrome: 2 * Self.padding),

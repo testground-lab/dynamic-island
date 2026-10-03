@@ -275,10 +275,7 @@ final class NotchController {
         guard let action else { return !expanded } // nothing else scrolls on the closed island
         switch action {
         case .nextPage, .previousPage:
-            let selection = ui.selection
-            let target = selection.page.applying(action)
-            guard target != selection.page else { return true }
-            withAnimation(Theme.page) { selection.page = target }
+            guard ui.selection.apply(action) else { return true }
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         case .open, .close:
             send { $0.gesture(action) }

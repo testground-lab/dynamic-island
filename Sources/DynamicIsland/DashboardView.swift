@@ -15,9 +15,8 @@ enum DashboardMetrics {
 struct DashboardView: View {
     let model: IslandModel
     let jev: JevUsageMonitor
-    @Binding var page: DashboardPage
-    @Binding var range: UsageRange
-    @Binding var jevRange: UsageRange
+    /// Shown pages, the open one and each page's range.
+    @Bindable var selection: DashboardSelection
     /// Header height; in the island this is the camera's height so the header
     /// sits in the menu-bar band beside it.
     var headerHeight: CGFloat = 28
@@ -31,6 +30,8 @@ struct DashboardView: View {
     var openSettings: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var page: DashboardPage { selection.pages.current }
 
     var body: some View {
         VStack(spacing: DashboardMetrics.spacing) {
@@ -70,14 +71,16 @@ struct DashboardView: View {
                     .lineLimit(1)
                     .contentTransition(.opacity)
                     .accessibilityAddTraits(.isHeader)
-                PageDots(page: $page)
+                PageDots(selection: selection)
                 Spacer(minLength: 0)
             }
             .frame(width: side, alignment: .leading)
             Color.clear.frame(width: cameraGap)
             HStack(spacing: 4) {
                 Spacer(minLength: 0)
-                if page == .usage {
+                // On the Jev page only a problem shows, so a hidden AI usage
+                // page can't hide a connection that stopped collecting.
+                if page == .usage || model.connection.problem != nil {
                     ConnectionDot(state: model.connection)
                         .padding(.trailing, 3)
                         .help("Updated \(Format.ago(model.lastUpdated))")
@@ -105,7 +108,7 @@ struct DashboardView: View {
                     .transition(pageTransition(from: .leading))
             case .jev:
                 ScrollingPage(height: pageHeight, snapshotOffset: snapshotOffset) { _ in
-                    JevPage(jev: jev, range: $jevRange)
+                    JevPage(jev: jev, range: $selection.jevRange)
                 }
                 .transition(pageTransition(from: .trailing))
             }
@@ -139,7 +142,8 @@ struct DashboardView: View {
             }
             LimitsPage(accounts: model.accounts, now: now,
                        emptyText: limitsEmptyText)
-            SectionHeader(title: "Usage") { RangePicker(range: $range) }
+            let range = selection.usageRange
+            SectionHeader(title: "Usage") { RangePicker(range: $selection.usageRange) }
                 .padding(.top, 4)
             UsagePage(report: model.usageReports[range], series: model.usageSeries[range],
                       state: model.usageState(for: range), queueIssue: queueIssue)
@@ -196,28 +200,42 @@ private struct EdgeState: Equatable {
     var below: Bool
 }
 
-/// One dot per page beside the title; the current one is a short bar.
+/// One dot per shown page beside the title; the current one is a short bar.
+/// A single shown page keeps its dot (not a button then) so the header
+/// doesn't shift.
 private struct PageDots: View {
-    @Binding var page: DashboardPage
+    let selection: DashboardSelection
 
     var body: some View {
-        HStack(spacing: -4) {
-            ForEach(DashboardPage.allCases, id: \.self) { item in
-                Button {
-                    withAnimation(Theme.page) { page = item }
-                } label: {
-                    Capsule()
-                        .fill(.white.opacity(item == page ? 0.85 : 0.28))
-                        .frame(width: item == page ? 10 : 4, height: 4)
-                        .frame(minWidth: 14, minHeight: 20)
-                        .contentShape(Rectangle())
+        let pages = selection.pages
+        if pages.shown.count > 1 {
+            HStack(spacing: -4) {
+                ForEach(pages.shown, id: \.self) { item in
+                    Button {
+                        selection.show(item)
+                    } label: {
+                        dot(current: item == pages.current)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(item.title) page")
+                    .accessibilityAddTraits(item == pages.current ? .isSelected : [])
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(item.title) page")
-                .accessibilityAddTraits(item == page ? .isSelected : [])
             }
+            .help("Swipe sideways with two fingers, or click a dot, to switch pages")
+        } else {
+            let hidden = DashboardPage.allCases.filter { !pages.isEnabled($0) }.map(\.title)
+            dot(current: true)
+                .help("Only \(pages.current.title) is shown. Turn on \(hidden.joined(separator: ", ")) in Settings to switch pages.")
+                .accessibilityHidden(true)
         }
-        .help("Swipe sideways with two fingers, or click a dot, to switch pages")
+    }
+
+    private func dot(current: Bool) -> some View {
+        Capsule()
+            .fill(.white.opacity(current ? 0.85 : 0.28))
+            .frame(width: current ? 10 : 4, height: 4)
+            .frame(minWidth: 14, minHeight: 20)
+            .contentShape(Rectangle())
     }
 }
 

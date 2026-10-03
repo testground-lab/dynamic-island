@@ -6,6 +6,6 @@ Jev page: Today / 7d / 30d / 6m picker ([17](17-six-month-range.md)); tokens (in
 
 **Source:** User request, 2026-10-03.
 
-**Status:** current (supersedes [07](07-single-scrolling-page.md) only in part: the "no page dots or sideways swipe" clause)
+**Status:** current (supersedes [07](07-single-scrolling-page.md) only in part: the "no page dots or sideways swipe" clause; extended by [18](18-page-toggles.md): either page can be hidden in Settings)
 
-**Where in code:** `DashboardView.swift` (`pages`, `PageDots`, `ScrollingPage`), `JevPage.swift`, `IslandCore/JevUsage.swift`, `IslandCore/Interaction.swift` (`nextPage`/`previousPage`, `DashboardPage`), `NotchController.scrolled`, `MenuBarController.installSwipeMonitor`
+**Where in code:** `DashboardView.swift` (`pages`, `PageDots`, `ScrollingPage`), `JevPage.swift`, `IslandCore/JevUsage.swift`, `IslandCore/Interaction.swift` (`DashboardPage`), `IslandCore/DashboardPages.swift` (swipe steps), `NotchController.scrolled`, `MenuBarController.installSwipeMonitor`

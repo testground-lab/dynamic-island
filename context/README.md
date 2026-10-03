@@ -14,7 +14,7 @@ Requirements and decisions for this project, one per file, so new sessions have 
 - [04-compact-like-vorssaint](requirements/04-compact-like-vorssaint.md): Compact, look and behave like Vorssaint's island
 - [05-idle-shows-only-notch](requirements/05-idle-shows-only-notch.md): Idle island is just the notch
 - [06-usage-by-account-and-model](requirements/06-usage-by-account-and-model.md): Usage for all accounts and by model, Today/7d/30d
-- [07-single-scrolling-page](requirements/07-single-scrolling-page.md): One page: Limits then Usage, scroll instead of pages
+- [07-single-scrolling-page](requirements/07-single-scrolling-page.md): One page: Limits then Usage, scroll instead of pages (partly superseded by 16)
 - [08-fixed-height](requirements/08-fixed-height.md): Fixed height, scroll inside
 - [09-usage-never-silently-missing](requirements/09-usage-never-silently-missing.md): Usage must never silently disappear
 - [10-token-bar-chart](requirements/10-token-bar-chart.md): Token bar chart like Vorssaint
@@ -23,6 +23,7 @@ Requirements and decisions for this project, one per file, so new sessions have 
 - [13-collapsed-live-strip](requirements/13-collapsed-live-strip.md): Collapsed strip with live quota and req/h (superseded)
 - [14-two-pages](requirements/14-two-pages.md): Separate Limits and Usage pages (superseded)
 - [15-height-up-to-60-percent](requirements/15-height-up-to-60-percent.md): Open island grows up to 60% of the screen (superseded)
+- [16-swipe-pages-jev](requirements/16-swipe-pages-jev.md): Two swipe pages: AI usage, then Jev usage
 
 ## Decisions
 - [0001-native-swiftui-lsuielement](decisions/0001-native-swiftui-lsuielement.md): Native SwiftUI app, LSUIElement
@@ -36,6 +37,7 @@ Requirements and decisions for this project, one per file, so new sessions have 
 - [0009-token-chart](decisions/0009-token-chart.md): Token chart with Swift Charts
 - [0010-macos-15-minimum](decisions/0010-macos-15-minimum.md): macOS 15 minimum
 - [0011-review-process](decisions/0011-review-process.md): Review process
+- [0012-jev-usage-from-router-log](decisions/0012-jev-usage-from-router-log.md): Jev usage from the router's local log, not the console API
 
 ## Open items
 - [open-items](open-items.md): undecided labels and what still needs checking on screen

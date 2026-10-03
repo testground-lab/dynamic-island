@@ -1,0 +1,11 @@
+# Two swipe pages: AI usage, then Jev usage
+
+**Statement:** "I also use Jev for development. Could I also add Jev usage inside the island? We could swipe to switch page." The open island has two pages, each about one thing: page one is the AI usage page of [07](07-single-scrolling-page.md) unchanged (Limits then Usage, one scrolling page); page two is Jev usage. Switch with a two-finger sideways swipe anywhere on the open island (fingers left = next) or by clicking the page dots beside the header title. Same fixed 480 x 262 size ([08](08-fixed-height.md)); the interactions of [0007](../decisions/0007-interactions.md) still hold (sideways strokes never open or close). The page is remembered while the app runs (not across launches). The menu-bar popover has the same pages and swipe.
+
+Jev page: Today / 7d / 30d picker; tokens (input + output) with requests and failed count; estimated spend = input tokens x $0.042 / 1M (output free at the moment), labelled "est. spend", rate in one constant (`JevPricing`); the token bar chart of [10](10-token-bar-chart.md) (hourly Today, daily 7d/30d, no "not recorded" shading); failures by error. Never silently empty (spirit of [09](09-usage-never-silently-missing.md)): log missing, nothing in range (with last call), log unreadable (reason), first read pending.
+
+**Source:** User request, 2026-10-03.
+
+**Status:** current (supersedes [07](07-single-scrolling-page.md) only in part: the "no page dots or sideways swipe" clause)
+
+**Where in code:** `DashboardView.swift` (`pages`, `PageDots`, `ScrollingPage`), `JevPage.swift`, `IslandCore/JevUsage.swift`, `IslandCore/Interaction.swift` (`nextPage`/`previousPage`, `DashboardPage`), `NotchController.scrolled`, `MenuBarController.installSwipeMonitor`

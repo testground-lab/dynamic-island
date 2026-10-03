@@ -107,6 +107,8 @@ public struct IslandInteraction: Equatable, Sendable {
             return [.haptic, .takeFocus]
         case .close:
             return isExpanded ? close() : []
+        case .nextPage, .previousPage:
+            return []
         }
     }
 
@@ -120,6 +122,7 @@ public struct IslandInteraction: Equatable, Sendable {
 public enum ScrollGestureAction: Equatable, Sendable {
     case open
     case close
+    case nextPage, previousPage
 }
 
 public enum ScrollPhase: Equatable, Sendable {
@@ -131,7 +134,8 @@ public enum ScrollPhase: Equatable, Sendable {
 }
 
 /// Recognizes vertical strokes of at least 30 points within a 30° cone of the vertical axis.
-/// Sideways movement only rejects diagonal or horizontal strokes; it never produces an action.
+/// Expanded, precise horizontal strokes of at least 50 points page within a 30° horizontal cone.
+/// Paging ignores vertical permission; left advances and right returns to the previous page.
 /// A stroke can change direction until it produces an action; afterward it is consumed.
 public struct ScrollGestureRecognizer: Equatable, Sendable {
     private struct Stroke: Equatable, Sendable {
@@ -157,7 +161,7 @@ public struct ScrollGestureRecognizer: Equatable, Sendable {
     /// Phased input starts a stroke explicitly; unphased input separates strokes by gaps over 0.3 s.
     /// Vertical permission belongs to the stroke's first event, not later pointer movement.
     public mutating func feed(
-        pull: Double, sideways: Double, time: TimeInterval, phase: ScrollPhase,
+        pull: Double, sideways: Double, time: TimeInterval, phase: ScrollPhase, precise: Bool,
         expanded: Bool, verticalAllowed: Bool
     ) -> ScrollGestureAction? {
         guard pull.isFinite, sideways.isFinite, time.isFinite else { return nil }
@@ -189,14 +193,14 @@ public struct ScrollGestureRecognizer: Equatable, Sendable {
         movement.dx = dx
         movement.dy = dy
         movement.lastEventAt = time
-        let action = Self.action(for: movement, expanded: expanded)
+        let action = Self.action(for: movement, expanded: expanded, precise: precise)
         movement.consumed = action != nil
         stroke = movement
         return action
     }
 
     private static func action(
-        for movement: Stroke, expanded: Bool
+        for movement: Stroke, expanded: Bool, precise: Bool
     ) -> ScrollGestureAction? {
         guard hypot(movement.dx, movement.dy) >= 30 else { return nil }
         let horizontalDistance = abs(movement.dx)
@@ -207,7 +211,26 @@ public struct ScrollGestureRecognizer: Equatable, Sendable {
             guard movement.permitsVertical else { return nil }
             if movement.dy > 0, !expanded { return .open }
             if movement.dy < 0, expanded { return .close }
+        } else if expanded, precise, horizontalDistance >= 50,
+            atan2(verticalDistance, horizontalDistance) <= coneBoundary
+        {
+            return movement.dx < 0 ? .nextPage : .previousPage
         }
         return nil
+    }
+}
+
+public enum DashboardPage: String, CaseIterable, Hashable, Sendable {
+    case usage, jev
+
+    public var next: DashboardPage { .jev }
+    public var previous: DashboardPage { .usage }
+
+    public func applying(_ action: ScrollGestureAction) -> DashboardPage {
+        switch action {
+        case .nextPage: next
+        case .previousPage: previous
+        case .open, .close: self
+        }
     }
 }

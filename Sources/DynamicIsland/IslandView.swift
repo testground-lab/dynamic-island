@@ -6,6 +6,9 @@ import SwiftUI
 final class IslandUIState {
     var presentation: IslandPresentation = .collapsed
     var usageRange: UsageRange = .today
+    /// The open island's page; kept while the app runs, so it reopens where it was left.
+    var page: DashboardPage = .usage
+    var jevRange: UsageRange = .today
     /// Size of the hardware notch (or a stand-in on displays without one).
     var notchSize = CGSize(width: 190, height: 32)
     /// Island frame in window coordinates (top-left origin), used for hit-testing.
@@ -36,6 +39,7 @@ enum IslandMetrics {
 
 struct IslandView: View {
     let model: IslandModel
+    let jev: JevUsageMonitor
     let ui: IslandUIState
     /// Any click on the island; the controller decides what it means
     /// (open, pin, or close when it lands on the camera area of the open header).
@@ -79,7 +83,8 @@ struct IslandView: View {
     private var expandedContent: some View {
         @Bindable var ui = ui
         let shoulder = NotchShape.shoulder(height: 200)
-        return DashboardView(model: model, range: $ui.usageRange,
+        return DashboardView(model: model, jev: jev, page: $ui.page,
+                             range: $ui.usageRange, jevRange: $ui.jevRange,
                              headerHeight: ui.notchSize.height,
                              cameraGap: ui.notchSize.width,
                              pageHeight: PageSizing.viewport(total: Theme.openHeight, header: ui.notchSize.height,

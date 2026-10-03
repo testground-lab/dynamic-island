@@ -87,13 +87,15 @@ final class NotchController {
     private var timers: [IslandTimer: DispatchWorkItem] = [:]
     private let pinnedExpanded: Bool
 
-    init(model: IslandModel, screen: NSScreen, pinnedExpanded: Bool = false,
+    init(model: IslandModel, jev: JevUsageMonitor, screen: NSScreen, startPage: DashboardPage = .usage,
+         pinnedExpanded: Bool = false,
          openSettings: @escaping () -> Void, quit: @escaping () -> Void) {
         self.pinnedExpanded = pinnedExpanded
         interaction = IslandInteraction(openOnHover: UserDefaults.standard.bool(forKey: Self.openOnHoverKey))
         panel = NotchPanel(contentRect: .zero)
+        ui.page = startPage
         var tap: () -> Void = {}
-        let root = IslandView(model: model, ui: ui, onTap: { tap() },
+        let root = IslandView(model: model, jev: jev, ui: ui, onTap: { tap() },
                               openSettings: openSettings, quit: quit)
         let hosting = IslandHostingView(rootView: root)
         hosting.sizingOptions = []
@@ -215,7 +217,8 @@ final class NotchController {
             return event
         }) { monitors.append(local) }
 
-        // Escape closes; a two-finger swipe down opens, up on the header row closes.
+        // Escape closes; a two-finger swipe down opens, up on the header row
+        // closes, sideways switches pages.
         if let local = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .scrollWheel], handler: { [weak self] event in
             guard let self else { return event }
             if event.type == .keyDown {
@@ -257,13 +260,22 @@ final class NotchController {
         let expanded = interaction.isExpanded
         // The open page scrolls; only a stroke that starts on the header row
         // may close the island. Anywhere else the event goes to the scroll view.
+        // Sideways strokes switch pages anywhere on the open island.
         let inHeader = NSEvent.mouseLocation.y >= panel.frame.maxY - ui.notchSize.height
         let action = gesture.feed(pull: Double(event.scrollingDeltaY) * sign * scale,
                                   sideways: Double(event.scrollingDeltaX) * sign * scale,
-                                  time: event.timestamp, phase: phase,
+                                  time: event.timestamp, phase: phase, precise: event.hasPreciseScrollingDeltas,
                                   expanded: expanded, verticalAllowed: !expanded || inHeader)
         guard let action else { return !expanded } // nothing else scrolls on the closed island
-        send { $0.gesture(action) }
+        switch action {
+        case .nextPage, .previousPage:
+            let target = ui.page.applying(action)
+            guard target != ui.page else { return true }
+            withAnimation(Theme.page) { ui.page = target }
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        case .open, .close:
+            send { $0.gesture(action) }
+        }
         return true
     }
 

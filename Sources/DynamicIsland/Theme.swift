@@ -15,6 +15,8 @@ enum Theme {
     /// Opening overshoots a little; closing settles without bounce and faster.
     static var open: Animation { motion(.spring(duration: 0.42, bounce: 0.22)) }
     static var close: Animation { motion(.spring(duration: 0.28, bounce: 0)) }
+    /// Sliding between the open island's pages.
+    static var page: Animation { motion(.spring(duration: 0.35, bounce: 0)) }
     /// The hover "pulse" on the closed island.
     static var emphasis: Animation { motion(.spring(duration: 0.3, bounce: 0.2)) }
     static let card = Color.white.opacity(0.06)

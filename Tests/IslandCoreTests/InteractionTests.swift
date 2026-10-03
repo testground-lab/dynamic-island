@@ -154,7 +154,7 @@ extension ScrollGestureRecognizer {
         expanded: Bool = false, verticalAllowed: Bool = true
     ) -> ScrollGestureAction? {
         feed(
-            pull: pull, sideways: sideways, time: time, phase: phase,
+            pull: pull, sideways: sideways, time: time, phase: phase, precise: precise,
             expanded: expanded, verticalAllowed: verticalAllowed)
     }
 }
@@ -198,7 +198,7 @@ func strokesOutsideVerticalConeNeverFire(_ degrees: Double) {
             #expect(
                 recognizer.sample(
                     pull: verticalSign * 100 * cos(angle), sideways: horizontalSign * 100 * sin(angle),
-                    phase: .began, expanded: verticalSign < 0) == nil)
+                    phase: .began, precise: false, expanded: verticalSign < 0) == nil)
         }
     }
 }
@@ -349,4 +349,45 @@ func invalidDeltasAreDroppedWithoutLosingStrokeState(_ invalid: Double) {
     let unknown = HeaderQuotaParser.windows(
         provider: .codex, signals: ["x-codex-primary-used-percent": "20"], observedAt: now)
     #expect(unknown.first?.periodSeconds == nil)
+}
+
+@Test(arguments: [false, true], [false, true])
+func pageSwipesRequireExpandedPrecise(_ expanded: Bool, _ precise: Bool) {
+    var recognizer = ScrollGestureRecognizer()
+    #expect(recognizer.sample(sideways: -50, phase: .began, precise: precise,
+        expanded: expanded) == (expanded && precise ? .nextPage : nil))
+}
+
+@Test func pageSwipeThresholdDirectionsAndConsumption() {
+    var recognizer = ScrollGestureRecognizer()
+    #expect(recognizer.sample(sideways: -49, phase: .began, expanded: true) == nil)
+    #expect(recognizer.sample(sideways: -1, expanded: true) == .nextPage)
+    #expect(recognizer.sample(sideways: 200, expanded: true) == nil)
+    #expect(recognizer.sample(sideways: 50, phase: .began, expanded: true,
+        verticalAllowed: false) == .previousPage)
+    #expect(recognizer.sample(pull: -100, expanded: true) == nil)
+}
+
+@Test(arguments: [0.0, 30, 30.01, 45])
+func pageSwipeHorizontalCone(_ degrees: Double) {
+    var recognizer = ScrollGestureRecognizer()
+    #expect(recognizer.sample(pull: 50 * tan(degrees * Double.pi / 180), sideways: -50,
+        phase: .began, expanded: true, verticalAllowed: false) == (degrees <= 30 ? .nextPage : nil))
+}
+
+@Test func dashboardPageClampsAndIgnoresPresentationActions() {
+    #expect(DashboardPage.usage.previous == .usage)
+    #expect(DashboardPage.usage.next == .jev)
+    #expect(DashboardPage.jev.previous == .usage)
+    #expect(DashboardPage.jev.next == .jev)
+    #expect(DashboardPage.usage.applying(.nextPage) == .jev)
+    #expect(DashboardPage.jev.applying(.previousPage) == .usage)
+    for page in DashboardPage.allCases {
+        #expect(page.applying(.open) == page)
+        #expect(page.applying(.close) == page)
+    }
+    var interaction = IslandInteraction()
+    #expect(interaction.gesture(.nextPage).isEmpty)
+    #expect(interaction.gesture(.previousPage).isEmpty)
+    #expect(!interaction.isExpanded)
 }

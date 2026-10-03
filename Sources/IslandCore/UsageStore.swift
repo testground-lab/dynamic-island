@@ -579,59 +579,9 @@ public actor UsageStore {
     private static func series(
         _ range: UsageRange, now: Date, calendar: Calendar, rows: [SeriesRow], trackingSince: Date?
     ) -> UsageSeries {
-        let start = range.start(now: now, calendar: calendar)
-        let today = calendar.startOfDay(for: now)
-        guard let end = calendar.date(byAdding: .day, value: 1, to: today)
-        else {
-            return UsageSeries(range: range, granularity: range.granularity, points: [],
-                               trackingSince: trackingSince)
-        }
-        var intervals: [(start: Date, end: Date)] = []
-        var cursor = start
-        while cursor < end {
-            let boundary = range.granularity == .hour
-                ? calendar.nextDate(after: cursor, matching: DateComponents(minute: 0, second: 0),
-                                    matchingPolicy: .nextTime) ?? end
-                : calendar.date(byAdding: .day, value: 1, to: cursor) ?? end
-            let next = min(boundary, end)
-            guard next > cursor else { break }
-            intervals.append((cursor, next))
-            cursor = next
-        }
-        var bins = Array(repeating: [Provider: UsageTotals](), count: intervals.count)
-        for row in rows {
-            let bucket = row.start
-            guard bucket >= start, bucket < end else { continue }
-            // Upper bound on starts handles variable-length calendar hours and days.
-            var lower = 0
-            var upper = intervals.count
-            while lower < upper {
-                let middle = lower + (upper - lower) / 2
-                if intervals[middle].start <= bucket { lower = middle + 1 }
-                else { upper = middle }
-            }
-            let index = lower - 1
-            guard bins.indices.contains(index), bucket < intervals[index].end else { continue }
-            let provider = row.provider
-            let totals = row.totals
-            let previous = bins[index][provider] ?? .zero
-            bins[index][provider] = UsageTotals(
-                requests: addingCounts(previous.requests, totals.requests),
-                inputTokens: addingCounts(previous.inputTokens, totals.inputTokens),
-                outputTokens: addingCounts(previous.outputTokens, totals.outputTokens),
-                totalTokens: addingCounts(previous.totalTokens, totals.totalTokens))
-        }
-        let points = intervals.enumerated().map { index, interval in
-            UsageSeriesPoint(
-                start: interval.start, end: interval.end,
-                byProvider: bins[index].map { provider, totals in
-                    ProviderTokens(provider: provider, inputTokens: totals.inputTokens,
-                                   outputTokens: totals.outputTokens, totalTokens: totals.totalTokens,
-                                   requests: totals.requests)
-                }, trackingSince: trackingSince, now: now)
-        }
-        return UsageSeries(range: range, granularity: range.granularity, points: points,
-                           trackingSince: trackingSince)
+        UsageSeries.binned(
+            range, entries: rows.map { .init(start: $0.start, provider: $0.provider, totals: $0.totals) },
+            now: now, calendar: calendar, trackingSince: trackingSince)
     }
 
     private static func report(

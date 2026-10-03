@@ -30,8 +30,11 @@ private func knownAccounts() throws -> [Account] {
 }
 private func databaseURL() throws -> URL {
     let directory = URL(
-        fileURLWithPath: "/Users/ksotis/workspace/tools/dynamic-island/.build/core-sql-tests/"
-            + UUID().uuidString)
+        fileURLWithPath: try FileManager.default.temporaryDirectory
+            .resourceValues(forKeys: [.canonicalPathKey]).canonicalPath
+            ?? FileManager.default.temporaryDirectory.path)
+        .appendingPathComponent("core-sql-tests")
+        .appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     return directory.appendingPathComponent("usage.sqlite")
 }

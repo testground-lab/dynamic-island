@@ -37,3 +37,7 @@ Queue reads are logged (counts and status only, never the key):
 ```sh
 /usr/bin/log show --last 10m --predicate 'subsystem == "dev.ksotis.dynamic-island"'
 ```
+
+## License
+
+GPL-3.0. See [LICENSE](LICENSE).

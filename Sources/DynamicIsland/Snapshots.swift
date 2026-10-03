@@ -11,7 +11,7 @@ enum Snapshots {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let model = IslandModel.demo()
         let jev = JevUsageMonitor.demo()
-        let noJev = JevUsageMonitor(url: nil)
+        let noJev = JevUsageMonitor(directory: nil)
         await noJev.reload()
         let notch = CGSize(width: 220, height: 38)
 

@@ -45,12 +45,7 @@ final class MenuBarController: NSObject {
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
             guard let self, self.popover.isShown, event.window === self.popover.contentViewController?.view.window
             else { return event }
-            let phase: IslandCore.ScrollPhase
-            if !event.momentumPhase.isEmpty { phase = .momentum }
-            else if event.phase.contains(.began) || event.phase.contains(.mayBegin) { phase = .began }
-            else if event.phase.contains(.ended) || event.phase.contains(.cancelled) { phase = .ended }
-            else if event.phase.isEmpty { phase = .none }
-            else { phase = .changed }
+            let phase = IslandCore.ScrollPhase(event)
             let sign: Double = event.isDirectionInvertedFromDevice ? 1 : -1
             let action = self.gesture.feed(pull: Double(event.scrollingDeltaY) * sign,
                                            sideways: Double(event.scrollingDeltaX) * sign,

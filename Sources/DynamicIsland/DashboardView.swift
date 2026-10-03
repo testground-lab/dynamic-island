@@ -94,8 +94,9 @@ struct DashboardView: View {
 
     // MARK: Page
 
-    /// Only the current page is in the hierarchy; the other slides out. Each
-    /// page enters from its own side, so the direction is right both ways.
+    /// Only the current page is in the hierarchy. Each page enters from and
+    /// leaves to its own side (AI usage left, Jev right), so both pages slide
+    /// the same way whichever direction you switch.
     @ViewBuilder private var pages: some View {
         ZStack(alignment: .top) {
             switch page {
@@ -114,7 +115,7 @@ struct DashboardView: View {
     }
 
     private func pageTransition(from edge: Edge) -> AnyTransition {
-        reduceMotion ? .opacity : .push(from: edge)
+        reduceMotion ? .opacity : .move(edge: edge)
     }
 
     @ViewBuilder private func usageContent(now: Date) -> some View {
@@ -200,7 +201,7 @@ private struct PageDots: View {
     @Binding var page: DashboardPage
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: -4) {
             ForEach(DashboardPage.allCases, id: \.self) { item in
                 Button {
                     withAnimation(Theme.page) { page = item }
@@ -208,8 +209,7 @@ private struct PageDots: View {
                     Capsule()
                         .fill(.white.opacity(item == page ? 0.85 : 0.28))
                         .frame(width: item == page ? 10 : 4, height: 4)
-                        .padding(.horizontal, 1.5)
-                        .padding(.vertical, 8)
+                        .frame(minWidth: 14, minHeight: 20)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

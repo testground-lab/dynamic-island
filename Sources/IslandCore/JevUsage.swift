@@ -43,6 +43,40 @@ public enum JevLogRead: Equatable, Sendable {
     case loaded(JevLogParse)
 }
 
+public struct JevLogFile: Equatable, Sendable {
+    public struct Signature: Equatable, Sendable {
+        public var inode: UInt64
+        public var size: UInt64
+        public var modified: Date?
+
+        public init(inode: UInt64, size: UInt64, modified: Date?) {
+            self.inode = inode
+            self.size = size
+            self.modified = modified
+        }
+    }
+
+    public var signature: Signature
+    public var calls: [JevCall]
+    public var skippedLines: Int
+
+    public init(signature: Signature, calls: [JevCall], skippedLines: Int) {
+        self.signature = signature
+        self.calls = calls
+        self.skippedLines = skippedLines
+    }
+}
+
+public struct JevLogScan: Equatable, Sendable {
+    public var read: JevLogRead
+    public var files: [String: JevLogFile]
+
+    public init(read: JevLogRead, files: [String: JevLogFile]) {
+        self.read = read
+        self.files = files
+    }
+}
+
 public enum JevLog {
     private static let maximumBytes = 64 * 1024 * 1024
 
@@ -93,6 +127,107 @@ public enum JevLog {
         return safeInteger(double).map { max(0, $0) }
     }
 
+    public static func scan(
+        directory: URL, previous: [String: JevLogFile], modifiedSince: Date
+    ) -> JevLogScan {
+        let manager = FileManager.default
+        let names: [String]
+        do {
+            let attributes = try manager.attributesOfItem(atPath: directory.path)
+            guard attributes[.type] as? FileAttributeType == .typeDirectory else {
+                return JevLogScan(read: .unreadable("Not a folder"), files: [:])
+            }
+            names = try manager.contentsOfDirectory(atPath: directory.path).filter {
+                !$0.hasPrefix(".") && $0.hasSuffix(".jsonl")
+            }.sorted()
+        } catch {
+            return JevLogScan(read: failure(error as NSError), files: [:])
+        }
+        var files: [String: JevLogFile] = [:]
+        var calls: [JevCall] = []
+        var skipped = 0
+        var totalBytes: UInt64 = 0
+        var firstFailure: String?
+        for name in names {
+            let url = directory.appendingPathComponent(name)
+            let signature: JevLogFile.Signature
+            do {
+                let attributes = try manager.attributesOfItem(atPath: url.path)
+                guard attributes[.type] as? FileAttributeType == .typeRegular else { continue }
+                signature = JevLogFile.Signature(
+                    inode: (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0,
+                    size: (attributes[.size] as? NSNumber)?.uint64Value ?? 0,
+                    modified: attributes[.modificationDate] as? Date)
+                if let modified = signature.modified, modified < modifiedSince { continue }
+            } catch {
+                if firstFailure == nil { firstFailure = reason(failure(error as NSError)) }
+                continue
+            }
+            guard signature.size <= UInt64(maximumBytes) else {
+                let megabytes = Int(ceil(Double(signature.size) / (1024 * 1024)))
+                if firstFailure == nil { firstFailure = "Too large to read (\(megabytes) MB)" }
+                continue
+            }
+            if previous[name]?.signature != signature, !manager.isReadableFile(atPath: url.path) {
+                if firstFailure == nil { firstFailure = "Permission denied" }
+                continue
+            }
+            let nextBytes = totalBytes + signature.size
+            guard nextBytes <= UInt64(maximumBytes) else {
+                let megabytes = Int(ceil(Double(nextBytes) / (1024 * 1024)))
+                return JevLogScan(read: .unreadable("Too large to read (\(megabytes) MB)"), files: [:])
+            }
+            let file: JevLogFile
+            if let cached = previous[name], cached.signature == signature {
+                file = cached
+            } else {
+                switch read(url) {
+                case .loaded(let parsed):
+                    file = JevLogFile(signature: signature, calls: parsed.calls,
+                                      skippedLines: parsed.skippedLines)
+                case .missing:
+                    if firstFailure == nil { firstFailure = "File disappeared" }
+                    continue
+                case .unreadable(let reason):
+                    if firstFailure == nil { firstFailure = reason }
+                    continue
+                }
+            }
+            totalBytes = nextBytes
+            files[name] = file
+            calls.append(contentsOf: file.calls)
+            skipped = addingCounts(skipped, file.skippedLines)
+        }
+        guard !files.isEmpty else {
+            return JevLogScan(read: firstFailure.map { .unreadable($0) } ?? .missing, files: [:])
+        }
+        if calls.isEmpty, skipped > 0 {
+            return JevLogScan(read: .unreadable("No recognisable lines (\(skipped) skipped)"), files: files)
+        }
+        let sorted = calls.enumerated().sorted {
+            if $0.element.timestamp != $1.element.timestamp {
+                return $0.element.timestamp < $1.element.timestamp
+            }
+            return $0.offset < $1.offset
+        }.map(\.element)
+        return JevLogScan(read: .loaded(JevLogParse(calls: sorted, skippedLines: skipped)), files: files)
+    }
+
+    private static func reason(_ read: JevLogRead) -> String {
+        if case .unreadable(let reason) = read { return reason }
+        return "File disappeared"
+    }
+
+    private static func failure(_ error: NSError) -> JevLogRead {
+        if (error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoSuchFileError)
+            || (error.domain == NSPOSIXErrorDomain && error.code == Int(ENOENT))
+        { return .missing }
+        if (error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoPermissionError)
+            || (error.domain == NSPOSIXErrorDomain && error.code == Int(EACCES))
+        { return .unreadable("Permission denied") }
+        return .unreadable(String(error.localizedDescription.prefix(80)))
+    }
+
     public static func read(_ url: URL) -> JevLogRead {
         do {
             let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
@@ -110,14 +245,7 @@ public enum JevLog {
             }
             return .loaded(parse(data))
         } catch {
-            let error = error as NSError
-            if error.domain == NSCocoaErrorDomain, error.code == NSFileReadNoSuchFileError {
-                return .missing
-            }
-            if (error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoPermissionError)
-                || (error.domain == NSPOSIXErrorDomain && error.code == Int(EACCES))
-            { return .unreadable("Permission denied") }
-            return .unreadable(String(error.localizedDescription.prefix(80)))
+            return failure(error as NSError)
         }
     }
 }
@@ -225,20 +353,21 @@ public enum JevViewState: Equatable, Sendable {
 }
 
 @MainActor @Observable public final class JevUsageMonitor {
-    public static var defaultURL: URL {
+    public static var defaultDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".claude/jev-model-router/usage.jsonl")
+            .appendingPathComponent(".claude/jev-model-router")
     }
 
     public private(set) var log: JevLogState = .loading
     public private(set) var reports: [UsageRange: JevReport] = [:]
     public private(set) var lastCall: Date?
-    private let url: URL?
+    private let directory: URL?
     private let calendar: Calendar
     private let now: @Sendable () -> Date
     private let pollInterval: Duration
     private var calls: [JevCall] = []
-    private var signature: Signature?
+    private var files: [String: JevLogFile] = [:]
+    private var read: JevLogRead?
     private var hour: Date?
     private var skippedLines: Int?
     private var polling: Task<Void, Never>?
@@ -247,24 +376,18 @@ public enum JevViewState: Equatable, Sendable {
     private var isDemo = false
     private static let logger = Logger(subsystem: "dev.ksotis.dynamic-island", category: "jev")
 
-    private struct Signature: Equatable, Sendable {
-        var inode: UInt64
-        var size: UInt64
-        var modified: Date?
-
-        init(url: URL) throws {
-            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-            inode = (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
-            size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
-            modified = attributes[.modificationDate] as? Date
-        }
+    private struct Reload: Sendable {
+        var scan: JevLogScan
+        var hour: Date
+        var reports: [UsageRange: JevReport]?
+        var skippedLines: Int
     }
 
     public init(
-        url: URL?, calendar: Calendar = .autoupdatingCurrent,
+        directory: URL?, calendar: Calendar = .autoupdatingCurrent,
         now: @escaping @Sendable () -> Date = { Date() }, pollInterval: Duration = .seconds(10)
     ) {
-        self.url = url
+        self.directory = directory
         self.calendar = calendar
         self.now = now
         self.pollInterval = pollInterval
@@ -298,12 +421,10 @@ public enum JevViewState: Equatable, Sendable {
         if reloading == nil {
             reloading = Task { [weak self] in
                 guard let self else { return }
-                var force = false
                 while true {
                     let generation = self.requestedReload
-                    await self.load(force: force)
+                    await self.load()
                     if self.requestedReload == generation { break }
-                    force = true
                 }
                 self.reloading = nil
             }
@@ -311,42 +432,47 @@ public enum JevViewState: Equatable, Sendable {
         await reloading?.value
     }
 
-    private func load(force: Bool) async {
-        guard let url else {
-            clear(.missing)
-            return
-        }
+    private func load() async {
         let date = now()
-        let currentHour = calendar.dateInterval(of: .hour, for: date)?.start ?? date
-        let currentSignature = await Task.detached { try? Signature(url: url) }.value
-        if !force, let currentSignature, currentSignature == signature, log == .loaded {
-            if currentHour != hour { recompute(now: date) }
-            return
+        let result = await Task.detached { [directory, calendar, files, read, hour] in
+            let currentHour = calendar.dateInterval(of: .hour, for: date)?.start ?? date
+            let month = UsageRange.month.start(now: date, calendar: calendar)
+            let modifiedSince = calendar.date(byAdding: .day, value: -1, to: month) ?? month
+            let scan = directory.map {
+                JevLog.scan(directory: $0, previous: files, modifiedSince: modifiedSince)
+            } ?? JevLogScan(read: .missing, files: [:])
+            let unchanged = scan.files.mapValues(\.signature) == files.mapValues(\.signature)
+            var reports: [UsageRange: JevReport]?
+            if case .loaded(let parsed) = scan.read,
+                !unchanged || currentHour != hour || read == nil || read != scan.read {
+                reports = Dictionary(uniqueKeysWithValues: UsageRange.allCases.map {
+                    ($0, JevUsage.report(parsed.calls, range: $0, now: date, calendar: calendar))
+                })
+            }
+            let skipped = scan.files.values.reduce(0) { addingCounts($0, $1.skippedLines) }
+            return Reload(scan: scan, hour: currentHour, reports: reports, skippedLines: skipped)
+        }.value
+        files = result.scan.files
+        read = result.scan.read
+        hour = result.hour
+        if skippedLines != result.skippedLines {
+            Self.logger.info("Skipped \(result.skippedLines) Jev usage log lines")
+            skippedLines = result.skippedLines
         }
-        let result = await Task.detached { JevLog.read(url) }.value
-        switch result {
+        switch result.scan.read {
         case .missing: clear(.missing)
         case .unreadable(let reason): clear(.unreadable(reason))
         case .loaded(let parsed):
-            log = .loaded
-            calls = parsed.calls
-            lastCall = calls.last?.timestamp
-            signature = currentSignature
-            if skippedLines != parsed.skippedLines {
-                Self.logger.info("Skipped \(parsed.skippedLines) Jev usage log lines")
-                skippedLines = parsed.skippedLines
-            }
-            recompute(now: date)
+            if log != .loaded { log = .loaded }
+            if let reports = result.reports { self.reports = reports }
+            if lastCall != parsed.calls.last?.timestamp { lastCall = parsed.calls.last?.timestamp }
         }
     }
 
     private func clear(_ state: JevLogState) {
-        log = state
-        calls = []
-        reports = [:]
-        lastCall = nil
-        signature = nil
-        hour = nil
+        if log != state { log = state }
+        if !reports.isEmpty { reports = [:] }
+        if lastCall != nil { lastCall = nil }
     }
 
     private func recompute(now: Date) {
@@ -370,7 +496,7 @@ public enum JevViewState: Equatable, Sendable {
     public static func demo(
         now: Date = Date(), calendar: Calendar = .autoupdatingCurrent
     ) -> JevUsageMonitor {
-        let monitor = JevUsageMonitor(url: nil, calendar: calendar, now: { now })
+        let monitor = JevUsageMonitor(directory: nil, calendar: calendar, now: { now })
         monitor.isDemo = true
         var seed: UInt64 = 42
         func random(_ upper: Int) -> Int {
@@ -389,7 +515,7 @@ public enum JevViewState: Equatable, Sendable {
                 monitor.calls.append(JevCall(
                     timestamp: timestamp, model: "jev-latest",
                     inputTokens: failed ? 0 : 800 + random(5201),
-                    outputTokens: failed ? 0 : 1 + random(8), latencyMs: 200 + random(1000),
+                    outputTokens: failed ? 0 : 100 + random(201), latencyMs: 200 + random(1000),
                     ok: !failed, error: failed ? (random(2) == 0 ? "timeout" : "http_502") : nil))
             }
         }

@@ -35,13 +35,13 @@ struct JevPage: View {
                         }
                     case .missing:
                         note("Jev usage appears once the jev-model-router hook logs a call.", symbol: "doc.text.magnifyingglass")
-                        detail("Reads ~/.claude/jev-model-router/usage.jsonl")
+                        detail("Reads the logs in ~/.claude/jev-model-router")
                     case .unreadable(let reason):
                         Label("Can't read the Jev log: \(reason)", systemImage: "exclamationmark.triangle.fill")
                             .font(.system(size: 10))
                             .foregroundStyle(Theme.warning)
                             .fixedSize(horizontal: false, vertical: true)
-                        detail("~/.claude/jev-model-router/usage.jsonl")
+                        detail("~/.claude/jev-model-router")
                     case .loading:
                         note("Reading the Jev log…", symbol: "hourglass")
                     }
@@ -71,7 +71,7 @@ struct JevPage: View {
                     .contentTransition(.numericText())
                 Text("est. spend").font(.system(size: 9.5)).foregroundStyle(Theme.tertiary)
             }
-            .help("Estimate: input tokens × $\(JevPricing.inputUSDPerMillionTokens) per million. Output tokens are free at the moment.")
+            .help("Estimate: input tokens × $\(String(format: "%.3f", JevPricing.inputUSDPerMillionTokens)) per million. Output tokens are free at the moment.")
             .accessibilityElement(children: .combine)
         }
     }

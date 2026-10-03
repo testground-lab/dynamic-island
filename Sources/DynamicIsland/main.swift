@@ -6,7 +6,7 @@ import IslandCore
 ///   --expanded  keep the island expanded
 ///   --menubar   force the menu-bar fallback even on a notched display
 ///   --page jev  open on the Jev page
-///   --jev-log <file>  read Jev usage from this file instead of the router's log
+///   --jev-dir <dir>  read Jev usage logs from this folder instead of the router's (also with --demo)
 ///   --snapshot <dir>  render demo PNGs and exit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -37,7 +37,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if arguments.contains("--demo") {
             model = IslandModel.demo()
-            jev = JevUsageMonitor.demo()
         } else {
             let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("DynamicIsland", isDirectory: true)
@@ -45,10 +44,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let store = UsageStore(url: support.appendingPathComponent("usage.sqlite"))
             model = IslandModel(keyStore: KeychainKeyStore(), store: store)
             model.start()
-            jev = JevUsageMonitor(url: Self.value(after: "--jev-log").map { URL(fileURLWithPath: $0) }
-                                  ?? JevUsageMonitor.defaultURL)
-            jev.start()
         }
+        // --demo shows a fixture unless --jev-dir points at real logs.
+        if let path = Self.value(after: "--jev-dir") {
+            jev = JevUsageMonitor(directory: URL(fileURLWithPath: path, isDirectory: true))
+        } else {
+            jev = arguments.contains("--demo") ? JevUsageMonitor.demo()
+                : JevUsageMonitor(directory: JevUsageMonitor.defaultDirectory)
+        }
+        jev.start()
         settings = SettingsWindowController(model: model)
 
         layoutForScreens()

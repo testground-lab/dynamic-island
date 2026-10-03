@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import Synchronization
+import Observation
 
 @testable import IslandCore
 
@@ -126,6 +127,180 @@ func jevInfersFailureWhenOKMissing(_ error: String) {
     #expect(JevLog.read(file) == .unreadable("Too large to read (65 MB)"))
 }
 
+@Test func jevScanMissingEmptyAndMarkerDirectories() throws {
+    let directory = try jevTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    #expect(JevLog.scan(directory: directory.appendingPathComponent("missing"), previous: [:],
+                        modifiedSince: .distantPast).read == .missing)
+    #expect(JevLog.scan(directory: directory, previous: [:], modifiedSince: .distantPast).read == .missing)
+    try Data(jevLine.utf8).write(to: directory.appendingPathComponent(".last-prune"))
+    #expect(JevLog.scan(directory: directory, previous: [:], modifiedSince: .distantPast).read == .missing)
+}
+
+@Test func jevScanMergesSessionsWithStableTimestampOrder() throws {
+    let directory = try jevTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let first = "{\"ts\":\"2026-10-03T00:00:00Z\",\"model\":\"first\"}"
+    let second = "{\"ts\":\"2026-10-03T00:00:00Z\",\"model\":\"second\"}"
+    try Data((jevLine + "\n" + first + "\ninvalid").utf8)
+        .write(to: directory.appendingPathComponent("usage-a.jsonl"))
+    try Data(second.utf8).write(to: directory.appendingPathComponent("usage-b.jsonl"))
+    let scan = JevLog.scan(directory: directory, previous: [:], modifiedSince: .distantPast)
+    let parsed = try #require({ if case .loaded(let parsed) = scan.read { return parsed }; return nil }())
+    #expect(parsed.calls.map(\.model) == ["first", "second", "jev-latest"])
+    #expect(parsed.skippedLines == 1)
+    #expect(scan.files.count == 2)
+}
+
+@Test func jevScanPicksUpWholeRewritesPartsAndDeletions() throws {
+    let directory = try jevTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("usage-abc.jsonl")
+    try Data(jevLine.utf8).write(to: file)
+    let initial = JevLog.scan(directory: directory, previous: [:], modifiedSince: .distantPast)
+    try Data((jevLine + "\n" + jevLine).utf8).write(to: file)
+    let rewritten = JevLog.scan(directory: directory, previous: initial.files, modifiedSince: .distantPast)
+    #expect(rewritten.files["usage-abc.jsonl"]?.calls.count == 2)
+    let replacement = (jevLine + "\n" + jevLine).replacingOccurrences(of: "123,", with: "321,")
+    try Data(replacement.utf8).write(to: file)
+    let modified = try #require(rewritten.files["usage-abc.jsonl"]?.signature.modified)
+    try FileManager.default.setAttributes([.modificationDate: modified.addingTimeInterval(1)],
+                                          ofItemAtPath: file.path)
+    let sameSize = JevLog.scan(directory: directory, previous: rewritten.files, modifiedSince: .distantPast)
+    #expect(sameSize.files["usage-abc.jsonl"]?.calls.map(\.inputTokens) == [321, 321])
+    let part = directory.appendingPathComponent("usage-abc.1.jsonl")
+    try Data(jevLine.utf8).write(to: part)
+    let added = JevLog.scan(directory: directory, previous: sameSize.files, modifiedSince: .distantPast)
+    #expect(added.files.count == 2)
+    try FileManager.default.removeItem(at: file)
+    let deleted = JevLog.scan(directory: directory, previous: added.files, modifiedSince: .distantPast)
+    #expect(deleted.files.keys.sorted() == ["usage-abc.1.jsonl"])
+    #expect(deleted.read == .loaded(JevLogParse(calls: JevLog.parse(Data(jevLine.utf8)).calls, skippedLines: 0)))
+}
+
+@Test func jevScanReusesMatchingCachedParse() throws {
+    let directory = try jevTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let name = "usage-abc.jsonl"
+    try Data(jevLine.utf8).write(to: directory.appendingPathComponent(name))
+    var previous = JevLog.scan(directory: directory, previous: [:], modifiedSince: .distantPast).files
+    let cached = jevCall(jevNow, input: 987)
+    previous[name]?.calls = [cached]
+    previous[name]?.skippedLines = 2
+    let scan = JevLog.scan(directory: directory, previous: previous, modifiedSince: .distantPast)
+    #expect(scan.read == .loaded(JevLogParse(calls: [cached], skippedLines: 2)))
+    #expect(scan.files == previous)
+}
+
+@Test func jevScanIgnoresOldFilesAndDropsTheirCache() throws {
+    let directory = try jevTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("usage-old.jsonl")
+    try Data(jevLine.utf8).write(to: file)
+    try FileManager.default.setAttributes([.modificationDate: jevNow.addingTimeInterval(-1)], ofItemAtPath: file.path)
+    let initial = JevLog.scan(directory: directory, previous: [:], modifiedSince: .distantPast)
+    let scan = JevLog.scan(directory: directory, previous: initial.files, modifiedSince: jevNow)
+    #expect(scan.read == .missing)
+    #expect(scan.files.isEmpty)
+    try FileManager.default.setAttributes([.modificationDate: jevNow], ofItemAtPath: file.path)
+    #expect(JevLog.scan(directory: directory, previous: [:], modifiedSince: jevNow).files.count == 1)
+}
+
+@Test func jevScanSkipsUnreadableFilesAndReportsAllUnreadable() throws {
+    guard geteuid() != 0 else { return }
+    let directory = try jevTemporaryDirectory()
+    let bad = directory.appendingPathComponent("usage-a.jsonl")
+    let good = directory.appendingPathComponent("usage-b.jsonl")
+    defer {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: bad.path)
+        try? FileManager.default.removeItem(at: directory)
+    }
+    try Data(jevLine.utf8).write(to: bad)
+    try Data(jevLine.utf8).write(to: good)
+    try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: bad.path)
+    let scan = JevLog.scan(directory: directory, previous: [:], modifiedSince: .distantPast)
+    #expect(scan.files.keys.sorted() == ["usage-b.jsonl"])
+    #expect(scan.read == JevLog.read(good))
+    try FileManager.default.removeItem(at: good)
+    let failed = JevLog.scan(directory: directory, previous: scan.files, modifiedSince: .distantPast)
+    #expect(failed.read == .unreadable("Permission denied"))
+    #expect(failed.files.isEmpty)
+}
+
+@Test func jevScanReportsUnreadableDirectory() throws {
+    guard geteuid() != 0 else { return }
+    let directory = try jevTemporaryDirectory()
+    defer {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        try? FileManager.default.removeItem(at: directory)
+    }
+    try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: directory.path)
+    #expect(JevLog.scan(directory: directory, previous: [:], modifiedSince: .distantPast).read
+        == .unreadable("Permission denied"))
+}
+
+@Test func jevScanReportsUnrecognisableLines() throws {
+    let directory = try jevTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try Data("broken\n{}\n".utf8).write(to: directory.appendingPathComponent("usage-abc.jsonl"))
+    let scan = JevLog.scan(directory: directory, previous: [:], modifiedSince: .distantPast)
+    #expect(scan.read == .unreadable("No recognisable lines (2 skipped)"))
+    #expect(JevLog.scan(directory: directory, previous: scan.files, modifiedSince: .distantPast) == scan)
+}
+
+@Test func jevScanIgnoresOtherFilesDotfilesAndFolders() throws {
+    let directory = try jevTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    for name in ["usage.txt", ".usage.jsonl", "usage.jsonl.bak"] {
+        try Data(jevLine.utf8).write(to: directory.appendingPathComponent(name))
+    }
+    try FileManager.default.createDirectory(at: directory.appendingPathComponent("folder.jsonl"),
+                                             withIntermediateDirectories: false)
+    #expect(JevLog.scan(directory: directory, previous: [:], modifiedSince: .distantPast).read == .missing)
+    #expect(JevLog.scan(directory: directory.appendingPathComponent("usage.txt"), previous: [:],
+                        modifiedSince: .distantPast).read == .unreadable("Not a folder"))
+}
+
+@Test func jevScanCapsCombinedCachedAndReadBytes() throws {
+    let directory = try jevTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    var previous: [String: JevLogFile] = [:]
+    for name in ["usage-a.jsonl", "usage-b.jsonl"] {
+        let file = directory.appendingPathComponent(name)
+        #expect(FileManager.default.createFile(atPath: file.path, contents: nil))
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.truncate(atOffset: 33 * 1024 * 1024)
+        try handle.close()
+        let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+        previous[name] = JevLogFile(signature: .init(
+            inode: (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0,
+            size: 33 * 1024 * 1024, modified: attributes[.modificationDate] as? Date),
+            calls: [jevCall(jevNow)], skippedLines: 0)
+    }
+    #expect(JevLog.scan(directory: directory, previous: previous, modifiedSince: .distantPast).read
+        == .unreadable("Too large to read (66 MB)"))
+    // One cached 33 MB file plus a freshly parsed file also counts toward the same cap.
+    previous.removeValue(forKey: "usage-b.jsonl")
+    #expect(JevLog.scan(directory: directory, previous: previous, modifiedSince: .distantPast).read
+        == .unreadable("Too large to read (66 MB)"))
+}
+
+@Test func jevScanSkipsOversizeSessionWhileOthersLoad() throws {
+    let directory = try jevTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let large = directory.appendingPathComponent("usage-a.jsonl")
+    #expect(FileManager.default.createFile(atPath: large.path, contents: nil))
+    let handle = try FileHandle(forWritingTo: large)
+    try handle.truncate(atOffset: 64 * 1024 * 1024 + 1)
+    try handle.close()
+    #expect(JevLog.scan(directory: directory, previous: [:], modifiedSince: .distantPast).read
+        == .unreadable("Too large to read (65 MB)"))
+    try Data(jevLine.utf8).write(to: directory.appendingPathComponent("usage-b.jsonl"))
+    let scan = JevLog.scan(directory: directory, previous: [:], modifiedSince: .distantPast)
+    #expect(scan.files.keys.sorted() == ["usage-b.jsonl"])
+    #expect(scan.read == .loaded(JevLog.parse(Data(jevLine.utf8))))
+}
+
 @Test func jevSpendOnlyChargesInput() {
     #expect(JevPricing.estimatedSpendUSD(inputTokens: 1_000_000) == 0.042)
     #expect(JevPricing.estimatedSpendUSD(inputTokens: -1) == 0)
@@ -212,11 +387,11 @@ func jevHalfHourDSTBinsCalendarHours(_ fixture: (String, String, Double, Double)
     #expect(report.series.points.allSatisfy { $0.recorded && !$0.partial })
 }
 
-@MainActor @Test func jevMonitorReadsAppendsReplacesDeletes() async throws {
+@MainActor @Test func jevMonitorReadsSessionsRewritesDeletes() async throws {
     let directory = try jevTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let file = directory.appendingPathComponent("usage.jsonl")
-    let monitor = JevUsageMonitor(url: file, calendar: jevCalendar(), now: { jevNow })
+    let monitor = JevUsageMonitor(directory: directory, calendar: jevCalendar(), now: { jevNow })
     #expect(monitor.state(for: .today) == .loading)
     await monitor.reload()
     #expect(monitor.state(for: .today) == .missing)
@@ -224,18 +399,15 @@ func jevHalfHourDSTBinsCalendarHours(_ fixture: (String, String, Double, Double)
     await monitor.reload()
     #expect(monitor.reports[.today]?.totals.requests == 1)
     #expect(monitor.state(for: .today) == .data(monitor.reports[.today]!))
-    let handle = try FileHandle(forWritingTo: file)
-    try handle.seekToEnd()
-    try handle.write(contentsOf: Data(("\n" + jevLine).utf8))
-    try handle.close()
+    let session = directory.appendingPathComponent("usage-other.jsonl")
+    try Data(jevLine.utf8).write(to: session)
     await monitor.reload()
     #expect(monitor.reports[.today]?.totals.requests == 2)
-    let temporary = directory.appendingPathComponent("temporary")
-    try Data(jevLine.utf8).write(to: temporary)
-    #expect(rename(temporary.path, file.path) == 0)
+    try Data((jevLine + "\n" + jevLine).utf8).write(to: file)
     await monitor.reload()
-    #expect(monitor.reports[.today]?.totals.requests == 1)
+    #expect(monitor.reports[.today]?.totals.requests == 3)
     try FileManager.default.removeItem(at: file)
+    try FileManager.default.removeItem(at: session)
     await monitor.reload()
     #expect(monitor.log == .missing)
     #expect(monitor.lastCall == nil)
@@ -245,15 +417,17 @@ func jevHalfHourDSTBinsCalendarHours(_ fixture: (String, String, Double, Double)
 @MainActor @Test func jevMonitorEmptyUnreadableAndNilStates() async throws {
     let directory = try jevTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
-    let unreadable = JevUsageMonitor(url: directory)
+    let wrongPath = directory.appendingPathComponent("not-a-folder")
+    try Data().write(to: wrongPath)
+    let unreadable = JevUsageMonitor(directory: wrongPath)
     await unreadable.reload()
-    #expect(unreadable.state(for: .today) == .unreadable("Not a regular file"))
-    let missing = JevUsageMonitor(url: nil)
+    #expect(unreadable.state(for: .today) == .unreadable("Not a folder"))
+    let missing = JevUsageMonitor(directory: nil)
     await missing.reload()
     #expect(missing.state(for: .today) == .missing)
     let file = directory.appendingPathComponent("usage.jsonl")
     try Data().write(to: file)
-    let monitor = JevUsageMonitor(url: file, calendar: jevCalendar(), now: { jevNow })
+    let monitor = JevUsageMonitor(directory: directory, calendar: jevCalendar(), now: { jevNow })
     await monitor.reload()
     #expect(monitor.state(for: .today) == .empty(lastCall: nil))
     try Data("{\"ts\":\"2026-10-02T00:00:00Z\"}".utf8).write(to: file)
@@ -267,7 +441,7 @@ func jevHalfHourDSTBinsCalendarHours(_ fixture: (String, String, Double, Double)
     let file = directory.appendingPathComponent("usage.jsonl")
     try Data(jevLine.utf8).write(to: file)
     let clock = Mutex(jevDate("2026-10-03T05:30:00Z"))
-    let monitor = JevUsageMonitor(url: file, calendar: jevCalendar(), now: { clock.withLock { $0 } })
+    let monitor = JevUsageMonitor(directory: directory, calendar: jevCalendar(), now: { clock.withLock { $0 } })
     await monitor.reload()
     let initial = monitor.reports[.today]
     await monitor.reload()
@@ -283,12 +457,56 @@ func jevHalfHourDSTBinsCalendarHours(_ fixture: (String, String, Double, Double)
     #expect(monitor.reports[.week]?.totals.requests == 1)
 }
 
+@MainActor @Test func jevMonitorDoesNotInvalidateUnchangedObservableState() async throws {
+    let directory = try jevTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("usage-abc.jsonl")
+    let clock = Mutex(jevNow)
+    let monitor = JevUsageMonitor(directory: directory, calendar: jevCalendar(),
+                                  now: { clock.withLock { $0 } })
+    for contents in [nil, "broken", jevLine] as [String?] {
+        if let contents { try Data(contents.utf8).write(to: file) }
+        await monitor.reload()
+        let changes = Mutex(0)
+        withObservationTracking {
+            _ = monitor.log
+            _ = monitor.reports
+            _ = monitor.lastCall
+        } onChange: {
+            changes.withLock { $0 += 1 }
+        }
+        await monitor.reload()
+        #expect(changes.withLock { $0 } == 0)
+        if contents == jevLine {
+            clock.withLock { $0 = jevNow.addingTimeInterval(3600) }
+            await monitor.reload()
+            #expect(changes.withLock { $0 } == 1)
+        }
+    }
+}
+
+@MainActor @Test func jevMonitorUsesNewestCallAcrossSessions() async throws {
+    let directory = try jevTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try Data(jevLine.utf8).write(to: directory.appendingPathComponent("usage-z.jsonl"))
+    let latest = "{\"ts\":\"2026-10-03T14:00:00Z\"}"
+    try Data(latest.utf8).write(to: directory.appendingPathComponent("usage-a.jsonl"))
+    let monitor = JevUsageMonitor(directory: directory, calendar: jevCalendar(), now: { jevNow })
+    await monitor.reload()
+    #expect(monitor.lastCall == jevDate("2026-10-03T14:00:00Z"))
+    #expect(monitor.reports[.today]?.totals.requests == 2)
+}
+
 @MainActor @Test func jevDemoIsDeterministicAndNeverPolls() async {
     let monitor = JevUsageMonitor.demo(now: jevNow, calendar: jevCalendar())
     let duplicate = JevUsageMonitor.demo(now: jevNow, calendar: jevCalendar())
     #expect(monitor.reports == duplicate.reports)
     for range in UsageRange.allCases {
         #expect(monitor.reports[range]!.totals.requests > 0)
+        let totals = monitor.reports[range]!.totals
+        let successful = totals.requests - totals.failed
+        #expect(totals.outputTokens >= successful * 100)
+        #expect(totals.outputTokens <= successful * 300)
         #expect(monitor.state(for: range) == .data(monitor.reports[range]!))
     }
     let original = monitor.reports
@@ -304,7 +522,7 @@ func jevHalfHourDSTBinsCalendarHours(_ fixture: (String, String, Double, Double)
     let directory = try jevTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let file = directory.appendingPathComponent("usage.jsonl")
-    let monitor = JevUsageMonitor(url: file, calendar: jevCalendar(), now: { jevNow },
+    let monitor = JevUsageMonitor(directory: directory, calendar: jevCalendar(), now: { jevNow },
                                   pollInterval: .milliseconds(10))
     monitor.start()
     monitor.start()

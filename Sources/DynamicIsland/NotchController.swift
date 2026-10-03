@@ -2,6 +2,17 @@ import AppKit
 import IslandCore
 import SwiftUI
 
+extension IslandCore.ScrollPhase {
+    /// The recogniser's view of a trackpad or wheel event's phase.
+    init(_ event: NSEvent) {
+        if !event.momentumPhase.isEmpty { self = .momentum }
+        else if event.phase.contains(.began) || event.phase.contains(.mayBegin) { self = .began }
+        else if event.phase.contains(.ended) || event.phase.contains(.cancelled) { self = .ended }
+        else if event.phase.isEmpty { self = .none }
+        else { self = .changed }
+    }
+}
+
 extension NSScreen {
     /// The camera housing's frame in screen coordinates, if this display has one.
     var notchFrame: CGRect? {
@@ -247,12 +258,7 @@ final class NotchController {
     /// Feeds a scroll event to the gesture recogniser; true if it was used.
     private func scrolled(_ event: NSEvent) -> Bool {
         guard event.window === panel, isPointerInside else { return false }
-        let phase: IslandCore.ScrollPhase
-        if !event.momentumPhase.isEmpty { phase = .momentum }
-        else if event.phase.contains(.began) || event.phase.contains(.mayBegin) { phase = .began }
-        else if event.phase.contains(.ended) || event.phase.contains(.cancelled) { phase = .ended }
-        else if event.phase.isEmpty { phase = .none }
-        else { phase = .changed }
+        let phase = IslandCore.ScrollPhase(event)
         // Normalise so positive = fingers moving down, whatever the
         // natural-scrolling setting; wheels get a coarser step.
         let sign: Double = event.isDirectionInvertedFromDevice ? 1 : -1

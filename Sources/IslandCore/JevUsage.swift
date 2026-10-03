@@ -70,10 +70,13 @@ public struct JevLogFile: Equatable, Sendable {
 public struct JevLogScan: Equatable, Sendable {
     public var read: JevLogRead
     public var files: [String: JevLogFile]
+    /// Some files loaded but others couldn't be read: the totals are incomplete.
+    public var warning: String?
 
-    public init(read: JevLogRead, files: [String: JevLogFile]) {
+    public init(read: JevLogRead, files: [String: JevLogFile], warning: String? = nil) {
         self.read = read
         self.files = files
+        self.warning = warning
     }
 }
 
@@ -148,6 +151,11 @@ public enum JevLog {
         var skipped = 0
         var totalBytes: UInt64 = 0
         var firstFailure: String?
+        var failures = 0
+        func fail(_ reason: String) {
+            failures += 1
+            if firstFailure == nil { firstFailure = reason }
+        }
         for name in names {
             let url = directory.appendingPathComponent(name)
             let signature: JevLogFile.Signature
@@ -160,16 +168,16 @@ public enum JevLog {
                     modified: attributes[.modificationDate] as? Date)
                 if let modified = signature.modified, modified < modifiedSince { continue }
             } catch {
-                if firstFailure == nil { firstFailure = reason(failure(error as NSError)) }
+                fail(reason(failure(error as NSError)))
                 continue
             }
             guard signature.size <= UInt64(maximumBytes) else {
                 let megabytes = Int(ceil(Double(signature.size) / (1024 * 1024)))
-                if firstFailure == nil { firstFailure = "Too large to read (\(megabytes) MB)" }
+                fail("Too large to read (\(megabytes) MB)")
                 continue
             }
             if previous[name]?.signature != signature, !manager.isReadableFile(atPath: url.path) {
-                if firstFailure == nil { firstFailure = "Permission denied" }
+                fail("Permission denied")
                 continue
             }
             let nextBytes = totalBytes + signature.size
@@ -186,10 +194,10 @@ public enum JevLog {
                     file = JevLogFile(signature: signature, calls: parsed.calls,
                                       skippedLines: parsed.skippedLines)
                 case .missing:
-                    if firstFailure == nil { firstFailure = "File disappeared" }
+                    fail("File disappeared")
                     continue
                 case .unreadable(let reason):
-                    if firstFailure == nil { firstFailure = reason }
+                    fail(reason)
                     continue
                 }
             }
@@ -201,8 +209,12 @@ public enum JevLog {
         guard !files.isEmpty else {
             return JevLogScan(read: firstFailure.map { .unreadable($0) } ?? .missing, files: [:])
         }
+        let warning = firstFailure.map {
+            "\(failures) log file\(failures == 1 ? "" : "s") couldn't be read (\($0)); totals are incomplete."
+        }
         if calls.isEmpty, skipped > 0 {
-            return JevLogScan(read: .unreadable("No recognisable lines (\(skipped) skipped)"), files: files)
+            return JevLogScan(read: .unreadable("No recognisable lines (\(skipped) skipped)"), files: files,
+                              warning: warning)
         }
         let sorted = calls.enumerated().sorted {
             if $0.element.timestamp != $1.element.timestamp {
@@ -210,7 +222,8 @@ public enum JevLog {
             }
             return $0.offset < $1.offset
         }.map(\.element)
-        return JevLogScan(read: .loaded(JevLogParse(calls: sorted, skippedLines: skipped)), files: files)
+        return JevLogScan(read: .loaded(JevLogParse(calls: sorted, skippedLines: skipped)), files: files,
+                          warning: warning)
     }
 
     private static func reason(_ read: JevLogRead) -> String {
@@ -361,6 +374,8 @@ public enum JevViewState: Equatable, Sendable {
     public private(set) var log: JevLogState = .loading
     public private(set) var reports: [UsageRange: JevReport] = [:]
     public private(set) var lastCall: Date?
+    /// Set while some log files can't be read (the rest still count).
+    public private(set) var warning: String?
     private let directory: URL?
     private let calendar: Calendar
     private let now: @Sendable () -> Date
@@ -454,6 +469,7 @@ public enum JevViewState: Equatable, Sendable {
         }.value
         files = result.scan.files
         read = result.scan.read
+        if warning != result.scan.warning { warning = result.scan.warning }
         hour = result.hour
         if skippedLines != result.skippedLines {
             Self.logger.info("Skipped \(result.skippedLines) Jev usage log lines")

@@ -10,6 +10,16 @@ extension DashboardPage {
     }
 }
 
+private extension JevViewState {
+    /// Logs were read, so a partial-read warning belongs above them.
+    var hasLog: Bool {
+        switch self {
+        case .data, .empty: true
+        case .loading, .missing, .unreadable: false
+        }
+    }
+}
+
 /// Page two: calls the jev-model-router hook logged, per range, with tokens,
 /// an estimated spend and the same token chart as the Usage section. Always
 /// explains itself when there is nothing to show.
@@ -23,6 +33,12 @@ struct JevPage: View {
             SectionHeader(title: "Usage") { RangePicker(range: $range) }
             CardChrome {
                 VStack(alignment: .leading, spacing: 5) {
+                    if let warning = jev.warning, state.hasLog {
+                        Label(warning, systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(Theme.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     switch state {
                     case .data(let report):
                         totals(report.totals)

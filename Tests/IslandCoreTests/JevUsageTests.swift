@@ -221,6 +221,7 @@ func jevInfersFailureWhenOKMissing(_ error: String) {
     let scan = JevLog.scan(directory: directory, previous: [:], modifiedSince: .distantPast)
     #expect(scan.files.keys.sorted() == ["usage-b.jsonl"])
     #expect(scan.read == JevLog.read(good))
+    #expect(scan.warning == "1 log file couldn't be read (Permission denied); totals are incomplete.")
     try FileManager.default.removeItem(at: good)
     let failed = JevLog.scan(directory: directory, previous: scan.files, modifiedSince: .distantPast)
     #expect(failed.read == .unreadable("Permission denied"))
@@ -299,6 +300,7 @@ func jevInfersFailureWhenOKMissing(_ error: String) {
     let scan = JevLog.scan(directory: directory, previous: [:], modifiedSince: .distantPast)
     #expect(scan.files.keys.sorted() == ["usage-b.jsonl"])
     #expect(scan.read == .loaded(JevLog.parse(Data(jevLine.utf8))))
+    #expect(scan.warning == "1 log file couldn't be read (Too large to read (65 MB)); totals are incomplete.")
 }
 
 @Test func jevSpendOnlyChargesInput() {

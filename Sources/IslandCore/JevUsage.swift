@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import CoreFoundation
 import Observation
 import os
@@ -12,6 +13,8 @@ public struct JevCall: Hashable, Sendable {
     public var ok: Bool
     public var error: String?
     public var totalTokens: Int { addingCounts(inputTokens, outputTokens) }
+    public var isFailure: Bool { !ok && totalTokens == 0 }
+    public var isLate: Bool { !ok && totalTokens > 0 }
 
     public init(
         timestamp: Date, model: String, inputTokens: Int, outputTokens: Int,
@@ -47,12 +50,17 @@ public struct JevLogFile: Equatable, Sendable {
     public struct Signature: Equatable, Sendable {
         public var inode: UInt64
         public var size: UInt64
-        public var modified: Date?
+        public var modifiedNanoseconds: Int64
+        public var changedNanoseconds: Int64
+        public var modified: Date {
+            Date(timeIntervalSince1970: Double(modifiedNanoseconds) / 1_000_000_000)
+        }
 
-        public init(inode: UInt64, size: UInt64, modified: Date?) {
+        public init(inode: UInt64, size: UInt64, modifiedNanoseconds: Int64, changedNanoseconds: Int64) {
             self.inode = inode
             self.size = size
-            self.modified = modified
+            self.modifiedNanoseconds = modifiedNanoseconds
+            self.changedNanoseconds = changedNanoseconds
         }
     }
 
@@ -72,11 +80,16 @@ public struct JevLogScan: Equatable, Sendable {
     public var files: [String: JevLogFile]
     /// Some files loaded but others couldn't be read: the totals are incomplete.
     public var warning: String?
+    public var latestOutsideWindow: Date?
 
-    public init(read: JevLogRead, files: [String: JevLogFile], warning: String? = nil) {
+    public init(
+        read: JevLogRead, files: [String: JevLogFile], warning: String? = nil,
+        latestOutsideWindow: Date? = nil
+    ) {
         self.read = read
         self.files = files
         self.warning = warning
+        self.latestOutsideWindow = latestOutsideWindow
     }
 }
 
@@ -86,18 +99,23 @@ public enum JevLog {
     public static func parse(_ data: Data) -> JevLogParse {
         var calls: [JevCall] = []
         var skipped = 0
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let whole = ISO8601DateFormatter()
+        whole.formatOptions = [.withInternetDateTime]
         for bytes in data.split(separator: 10, omittingEmptySubsequences: false) {
             var line = Data(bytes)
             if line.last == 13 { line.removeLast() }
-            if let text = String(data: line, encoding: .utf8),
-                text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            { continue }
+            guard let text = String(data: line, encoding: .utf8) else {
+                skipped = addingCounts(skipped, 1)
+                continue
+            }
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
             // JSONSerialization's untyped object is confined to this wire boundary.
-            guard String(data: line, encoding: .utf8) != nil,
-                let object = try? JSONSerialization.jsonObject(with: line),
+            guard let object = try? JSONSerialization.jsonObject(with: line),
                 let fields = object as? [String: Any],
                 let rawDate = fields["ts"] as? String,
-                let timestamp = APIDateParser.parse(rawDate)
+                let timestamp = timestamp(rawDate, fractional: fractional, whole: whole)
             else {
                 skipped = addingCounts(skipped, 1)
                 continue
@@ -121,6 +139,31 @@ public enum JevLog {
         return JevLogParse(calls: sorted, skippedLines: skipped)
     }
 
+    private static func timestamp(
+        _ raw: String, fractional: ISO8601DateFormatter, whole: ISO8601DateFormatter
+    ) -> Date? {
+        let normalized = raw.replacingOccurrences(
+            of: #"(\.\d{3})\d+(?=Z|[+-]\d{2}:\d{2}$)"#, with: "$1", options: .regularExpression)
+        return fractional.date(from: normalized) ?? whole.date(from: normalized)
+    }
+
+    private static func metadata(_ url: URL) throws -> stat {
+        var attributes = stat()
+        guard stat(url.path, &attributes) == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        return attributes
+    }
+
+    private static func signature(_ attributes: stat) -> JevLogFile.Signature {
+        JevLogFile.Signature(
+            inode: UInt64(attributes.st_ino), size: UInt64(max(0, attributes.st_size)),
+            modifiedNanoseconds: Int64(attributes.st_mtimespec.tv_sec) * 1_000_000_000
+                + Int64(attributes.st_mtimespec.tv_nsec),
+            changedNanoseconds: Int64(attributes.st_ctimespec.tv_sec) * 1_000_000_000
+                + Int64(attributes.st_ctimespec.tv_nsec))
+    }
+
     private static func count(_ value: Any?) -> Int? {
         guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else {
             return nil
@@ -136,12 +179,12 @@ public enum JevLog {
         let manager = FileManager.default
         let names: [String]
         do {
-            let attributes = try manager.attributesOfItem(atPath: directory.path)
-            guard attributes[.type] as? FileAttributeType == .typeDirectory else {
+            let attributes = try metadata(directory)
+            guard attributes.st_mode & S_IFMT == S_IFDIR else {
                 return JevLogScan(read: .unreadable("Not a folder"), files: [:])
             }
             names = try manager.contentsOfDirectory(atPath: directory.path).filter {
-                !$0.hasPrefix(".") && $0.hasSuffix(".jsonl")
+                $0.hasPrefix("usage-") && $0.hasSuffix(".jsonl")
             }.sorted()
         } catch {
             return JevLogScan(read: failure(error as NSError), files: [:])
@@ -150,6 +193,7 @@ public enum JevLog {
         var calls: [JevCall] = []
         var skipped = 0
         var totalBytes: UInt64 = 0
+        var latestOutsideWindow: Date?
         var firstFailure: String?
         var failures = 0
         func fail(_ reason: String) {
@@ -160,24 +204,22 @@ public enum JevLog {
             let url = directory.appendingPathComponent(name)
             let signature: JevLogFile.Signature
             do {
-                let attributes = try manager.attributesOfItem(atPath: url.path)
-                guard attributes[.type] as? FileAttributeType == .typeRegular else { continue }
-                signature = JevLogFile.Signature(
-                    inode: (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0,
-                    size: (attributes[.size] as? NSNumber)?.uint64Value ?? 0,
-                    modified: attributes[.modificationDate] as? Date)
-                if let modified = signature.modified, modified < modifiedSince { continue }
+                let attributes = try metadata(url)
+                guard attributes.st_mode & S_IFMT == S_IFREG else { continue }
+                signature = Self.signature(attributes)
+                if signature.modified < modifiedSince {
+                    latestOutsideWindow = max(latestOutsideWindow ?? .distantPast, signature.modified)
+                    continue
+                }
             } catch {
-                fail(reason(failure(error as NSError)))
+                let read = failure(error as NSError)
+                if case .missing = read { continue }
+                fail(reason(read))
                 continue
             }
             guard signature.size <= UInt64(maximumBytes) else {
                 let megabytes = Int(ceil(Double(signature.size) / (1024 * 1024)))
                 fail("Too large to read (\(megabytes) MB)")
-                continue
-            }
-            if previous[name]?.signature != signature, !manager.isReadableFile(atPath: url.path) {
-                fail("Permission denied")
                 continue
             }
             let nextBytes = totalBytes + signature.size
@@ -194,7 +236,6 @@ public enum JevLog {
                     file = JevLogFile(signature: signature, calls: parsed.calls,
                                       skippedLines: parsed.skippedLines)
                 case .missing:
-                    fail("File disappeared")
                     continue
                 case .unreadable(let reason):
                     fail(reason)
@@ -206,7 +247,7 @@ public enum JevLog {
             calls.append(contentsOf: file.calls)
             skipped = addingCounts(skipped, file.skippedLines)
         }
-        guard !files.isEmpty else {
+        guard !files.isEmpty || latestOutsideWindow != nil else {
             return JevLogScan(read: firstFailure.map { .unreadable($0) } ?? .missing, files: [:])
         }
         let warning = firstFailure.map {
@@ -223,7 +264,7 @@ public enum JevLog {
             return $0.offset < $1.offset
         }.map(\.element)
         return JevLogScan(read: .loaded(JevLogParse(calls: sorted, skippedLines: skipped)), files: files,
-                          warning: warning)
+                          warning: warning, latestOutsideWindow: latestOutsideWindow)
     }
 
     private static func reason(_ read: JevLogRead) -> String {
@@ -243,11 +284,11 @@ public enum JevLog {
 
     public static func read(_ url: URL) -> JevLogRead {
         do {
-            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-            guard attributes[.type] as? FileAttributeType == .typeRegular else {
+            let attributes = try metadata(url)
+            guard attributes.st_mode & S_IFMT == S_IFREG else {
                 return .unreadable("Not a regular file")
             }
-            let size = (attributes[.size] as? NSNumber)?.intValue ?? 0
+            let size = attributes.st_size
             guard size <= maximumBytes else {
                 let megabytes = Int(ceil(Double(size) / (1024 * 1024)))
                 return .unreadable("Too large to read (\(megabytes) MB)")
@@ -279,11 +320,7 @@ public enum JevPricing {
         let locale = Locale(identifier: "en_US_POSIX")
         if usd >= 0.01 { return String(format: "$%.2f", locale: locale, usd) }
         var result = String(format: "$%.4f", locale: locale, usd)
-        while result.last == "0", result.count - (result.firstIndex(of: ".").map {
-            result.distance(from: result.startIndex, to: $0)
-        } ?? 0) - 1 > 2 {
-            result.removeLast()
-        }
+        for _ in 0..<2 where result.last == "0" { result.removeLast() }
         return result
     }
 }
@@ -291,6 +328,7 @@ public enum JevPricing {
 public struct JevTotals: Hashable, Sendable {
     public var requests: Int
     public var failed: Int
+    public var late: Int
     public var inputTokens: Int
     public var outputTokens: Int
     public var failuresByError: [String: Int]
@@ -298,11 +336,12 @@ public struct JevTotals: Hashable, Sendable {
     public var estimatedSpendUSD: Double { JevPricing.estimatedSpendUSD(inputTokens: inputTokens) }
 
     public init(
-        requests: Int = 0, failed: Int = 0, inputTokens: Int = 0, outputTokens: Int = 0,
+        requests: Int = 0, failed: Int = 0, late: Int = 0, inputTokens: Int = 0, outputTokens: Int = 0,
         failuresByError: [String: Int] = [:]
     ) {
         self.requests = requests
         self.failed = failed
+        self.late = late
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
         self.failuresByError = failuresByError
@@ -337,15 +376,16 @@ public enum JevUsage {
             totals.requests = addingCounts(totals.requests, 1)
             totals.inputTokens = addingCounts(totals.inputTokens, call.inputTokens)
             totals.outputTokens = addingCounts(totals.outputTokens, call.outputTokens)
-            if !call.ok {
+            if call.isFailure {
                 totals.failed = addingCounts(totals.failed, 1)
                 let error = call.error ?? "unknown"
                 totals.failuresByError[error] = addingCounts(totals.failuresByError[error] ?? 0, 1)
             }
+            if call.isLate { totals.late = addingCounts(totals.late, 1) }
             entries.append(.init(
                 start: call.timestamp, provider: chartProvider,
                 totals: UsageTotals(
-                    requests: 1, failed: call.ok ? 0 : 1, inputTokens: call.inputTokens,
+                    requests: 1, failed: call.isFailure ? 1 : 0, inputTokens: call.inputTokens,
                     outputTokens: call.outputTokens, totalTokens: call.totalTokens)))
         }
         return JevReport(
@@ -377,13 +417,17 @@ public enum JevViewState: Equatable, Sendable {
     /// Set while some log files can't be read (the rest still count).
     public private(set) var warning: String?
     private let directory: URL?
-    private let calendar: Calendar
+    private let calendar: @Sendable () -> Calendar
     private let now: @Sendable () -> Date
     private let pollInterval: Duration
     private var calls: [JevCall] = []
     private var files: [String: JevLogFile] = [:]
     private var read: JevLogRead?
-    private var hour: Date?
+    private struct RecomputeKey: Equatable, Sendable {
+        var hour: Date
+        var timeZone: String
+    }
+    private var key: RecomputeKey?
     private var skippedLines: Int?
     private var polling: Task<Void, Never>?
     private var reloading: Task<Void, Never>?
@@ -393,17 +437,19 @@ public enum JevViewState: Equatable, Sendable {
 
     private struct Reload: Sendable {
         var scan: JevLogScan
-        var hour: Date
+        var key: RecomputeKey
+        var lastCall: Date?
         var reports: [UsageRange: JevReport]?
         var skippedLines: Int
     }
 
     public init(
         directory: URL?, calendar: Calendar = .autoupdatingCurrent,
-        now: @escaping @Sendable () -> Date = { Date() }, pollInterval: Duration = .seconds(10)
+        now: @escaping @Sendable () -> Date = { Date() }, pollInterval: Duration = .seconds(10),
+        calendarProvider: (@Sendable () -> Calendar)? = nil
     ) {
         self.directory = directory
-        self.calendar = calendar
+        self.calendar = calendarProvider ?? { calendar }
         self.now = now
         self.pollInterval = pollInterval
     }
@@ -449,28 +495,38 @@ public enum JevViewState: Equatable, Sendable {
 
     private func load() async {
         let date = now()
-        let result = await Task.detached { [directory, calendar, files, read, hour] in
-            let currentHour = calendar.dateInterval(of: .hour, for: date)?.start ?? date
-            let month = UsageRange.month.start(now: date, calendar: calendar)
-            let modifiedSince = calendar.date(byAdding: .day, value: -1, to: month) ?? month
+        let calendar = calendar()
+        let result = await Task.detached { [directory, calendar, files, read, key] in
+            let currentKey = RecomputeKey(
+                hour: calendar.dateInterval(of: .hour, for: date)?.start ?? date,
+                timeZone: calendar.timeZone.identifier)
+            let start = UsageRange.allCases.map { $0.start(now: date, calendar: calendar) }.min() ?? date
+            let modifiedSince = calendar.date(byAdding: .day, value: -1, to: start) ?? start
             let scan = directory.map {
                 JevLog.scan(directory: $0, previous: files, modifiedSince: modifiedSince)
             } ?? JevLogScan(read: .missing, files: [:])
             let unchanged = scan.files.mapValues(\.signature) == files.mapValues(\.signature)
             var reports: [UsageRange: JevReport]?
             if case .loaded(let parsed) = scan.read,
-                !unchanged || currentHour != hour || read == nil || read != scan.read {
+                !unchanged || currentKey != key || read == nil || read != scan.read {
                 reports = Dictionary(uniqueKeysWithValues: UsageRange.allCases.map {
                     ($0, JevUsage.report(parsed.calls, range: $0, now: date, calendar: calendar))
                 })
             }
             let skipped = scan.files.values.reduce(0) { addingCounts($0, $1.skippedLines) }
-            return Reload(scan: scan, hour: currentHour, reports: reports, skippedLines: skipped)
+            var lastCall = scan.latestOutsideWindow
+            if case .loaded(let parsed) = scan.read {
+                let end = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: date)) ?? date
+                lastCall = parsed.calls.last { $0.timestamp >= start && $0.timestamp < end }?.timestamp
+                    ?? lastCall
+            }
+            return Reload(scan: scan, key: currentKey, lastCall: lastCall,
+                          reports: reports, skippedLines: skipped)
         }.value
         files = result.scan.files
         read = result.scan.read
         if warning != result.scan.warning { warning = result.scan.warning }
-        hour = result.hour
+        key = result.key
         if skippedLines != result.skippedLines {
             Self.logger.info("Skipped \(result.skippedLines) Jev usage log lines")
             skippedLines = result.skippedLines
@@ -478,10 +534,10 @@ public enum JevViewState: Equatable, Sendable {
         switch result.scan.read {
         case .missing: clear(.missing)
         case .unreadable(let reason): clear(.unreadable(reason))
-        case .loaded(let parsed):
+        case .loaded:
             if log != .loaded { log = .loaded }
             if let reports = result.reports { self.reports = reports }
-            if lastCall != parsed.calls.last?.timestamp { lastCall = parsed.calls.last?.timestamp }
+            if lastCall != result.lastCall { lastCall = result.lastCall }
         }
     }
 
@@ -492,7 +548,9 @@ public enum JevViewState: Equatable, Sendable {
     }
 
     private func recompute(now: Date) {
-        hour = calendar.dateInterval(of: .hour, for: now)?.start ?? now
+        let calendar = calendar()
+        key = RecomputeKey(hour: calendar.dateInterval(of: .hour, for: now)?.start ?? now,
+                           timeZone: calendar.timeZone.identifier)
         reports = Dictionary(uniqueKeysWithValues: UsageRange.allCases.map {
             ($0, JevUsage.report(calls, range: $0, now: now, calendar: calendar))
         })

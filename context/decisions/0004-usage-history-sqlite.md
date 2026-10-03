@@ -1,7 +1,7 @@
 # 0004: Persist usage as 15-minute buckets in SQLite
 
 - **Date:** 2026-10-02
-- **Status:** accepted
+- **Status:** accepted; retention superseded by [0013](0013-usage-retention-183-days.md) (31 → 183 days)
 
 ## Context
 The usage queue is a destructive read with ~60 s retention; 7d/30d need local history.

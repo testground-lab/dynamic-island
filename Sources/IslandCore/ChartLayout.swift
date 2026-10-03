@@ -35,7 +35,7 @@ public enum ChartLayout {
             }
         case .week:
             return []
-        case .month:
+        case .month, .halfYear:
             guard let first = series.points.first, let last = series.points.last else { return [] }
             return [first.start, series.points[series.points.count / 2].start, last.start]
         }

@@ -181,7 +181,7 @@ func tlsFailuresAreNotProxyDown(_ code: URLError.Code) async {
 
 @Test @MainActor func demoUsesAttributedThirtyDayHistory() {
     let demo = IslandModel.demo()
-    #expect(demo.usageReports.count == 3)
+    #expect(demo.usageReports.count == UsageRange.allCases.count)
     #expect(demo.usageReports[.month]?.totals.requests == 30)
     #expect(demo.usageReports[.month]?.byModel.count == 4)
     #expect(

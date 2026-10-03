@@ -90,7 +90,7 @@ final class IslandHostingView<Content: View>: NSHostingView<Content> {
 @MainActor
 final class NotchController {
     private let panel: NotchPanel
-    private let ui = IslandUIState()
+    private let ui: IslandUIState
     private var interaction: IslandInteraction
     private var gesture = ScrollGestureRecognizer()
     private var monitors: [Any] = []
@@ -98,13 +98,13 @@ final class NotchController {
     private var timers: [IslandTimer: DispatchWorkItem] = [:]
     private let pinnedExpanded: Bool
 
-    init(model: IslandModel, jev: JevUsageMonitor, screen: NSScreen, startPage: DashboardPage = .usage,
+    init(model: IslandModel, jev: JevUsageMonitor, selection: DashboardSelection, screen: NSScreen,
          pinnedExpanded: Bool = false,
          openSettings: @escaping () -> Void, quit: @escaping () -> Void) {
         self.pinnedExpanded = pinnedExpanded
         interaction = IslandInteraction(openOnHover: UserDefaults.standard.bool(forKey: Self.openOnHoverKey))
         panel = NotchPanel(contentRect: .zero)
-        ui.page = startPage
+        ui = IslandUIState(selection: selection)
         var tap: () -> Void = {}
         let root = IslandView(model: model, jev: jev, ui: ui, onTap: { tap() },
                               openSettings: openSettings, quit: quit)
@@ -275,9 +275,10 @@ final class NotchController {
         guard let action else { return !expanded } // nothing else scrolls on the closed island
         switch action {
         case .nextPage, .previousPage:
-            let target = ui.page.applying(action)
-            guard target != ui.page else { return true }
-            withAnimation(Theme.page) { ui.page = target }
+            let selection = ui.selection
+            let target = selection.page.applying(action)
+            guard target != selection.page else { return true }
+            withAnimation(Theme.page) { selection.page = target }
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         case .open, .close:
             send { $0.gesture(action) }

@@ -13,24 +13,24 @@ extension UsageSeries {
         }
     }
 
-    /// Bins entries into the range's calendar hours (Today) or days (7d/30d), DST-safe.
+    /// Bins entries into the range's calendar hours (Today), days (7d/30d), or weeks (6m), DST-safe.
     public static func binned(
         _ range: UsageRange, entries: [Entry], now: Date, calendar: Calendar, trackingSince: Date?
     ) -> UsageSeries {
         let start = range.start(now: now, calendar: calendar)
-        let today = calendar.startOfDay(for: now)
-        guard let end = calendar.date(byAdding: .day, value: 1, to: today)
-        else {
-            return UsageSeries(range: range, granularity: range.granularity, points: [],
-                               trackingSince: trackingSince)
-        }
+        let end = range.chartEnd(now: now, calendar: calendar)
         var intervals: [(start: Date, end: Date)] = []
         var cursor = start
         while cursor < end {
-            let boundary = range.granularity == .hour
-                ? calendar.nextDate(after: cursor, matching: DateComponents(minute: 0, second: 0),
-                                    matchingPolicy: .nextTime) ?? end
-                : calendar.date(byAdding: .day, value: 1, to: cursor) ?? end
+            let boundary: Date
+            if range.granularity == .week {
+                boundary = calendar.date(byAdding: .weekOfYear, value: 1, to: cursor) ?? end
+            } else {
+                boundary = range.granularity == .hour
+                    ? calendar.nextDate(after: cursor, matching: DateComponents(minute: 0, second: 0),
+                                        matchingPolicy: .nextTime) ?? end
+                    : calendar.date(byAdding: .day, value: 1, to: cursor) ?? end
+            }
             let next = min(boundary, end)
             guard next > cursor else { break }
             intervals.append((cursor, next))
@@ -40,7 +40,7 @@ extension UsageSeries {
         for row in entries {
             let bucket = row.start
             guard bucket >= start, bucket < end else { continue }
-            // Upper bound on starts handles variable-length calendar hours and days.
+            // Upper bound on starts handles variable-length calendar hours, days, and weeks.
             var lower = 0
             var upper = intervals.count
             while lower < upper {

@@ -7,7 +7,7 @@ import SwiftUI
 @MainActor
 final class MenuBarController: NSObject {
     private let model: IslandModel
-    private let state = PopoverUIState()
+    private let state: DashboardSelection
     private var gesture = ScrollGestureRecognizer()
     private var scrollMonitor: Any?
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -16,8 +16,10 @@ final class MenuBarController: NSObject {
     private let quit: () -> Void
     private var alive = true
 
-    init(model: IslandModel, jev: JevUsageMonitor, openSettings: @escaping () -> Void, quit: @escaping () -> Void) {
+    init(model: IslandModel, jev: JevUsageMonitor, selection: DashboardSelection,
+         openSettings: @escaping () -> Void, quit: @escaping () -> Void) {
         self.model = model
+        state = selection
         self.openSettings = openSettings
         self.quit = quit
         super.init()
@@ -122,19 +124,11 @@ final class MenuBarController: NSObject {
     @objc private func quitApp() { quit() }
 }
 
-/// Page and range choices of the popover, kept while the app runs.
-@MainActor @Observable
-final class PopoverUIState {
-    var page: DashboardPage = .usage
-    var range: UsageRange = .today
-    var jevRange: UsageRange = .today
-}
-
 /// The dashboard in the popover: no camera, so the header is one row.
 struct PopoverDashboard: View {
     let model: IslandModel
     let jev: JevUsageMonitor
-    @Bindable var state: PopoverUIState
+    @Bindable var state: DashboardSelection
     var snapshotOffset: CGFloat?
     var openSettings: () -> Void
 
@@ -142,7 +136,7 @@ struct PopoverDashboard: View {
     static let padding: CGFloat = 12
 
     var body: some View {
-        DashboardView(model: model, jev: jev, page: $state.page, range: $state.range, jevRange: $state.jevRange,
+        DashboardView(model: model, jev: jev, page: $state.page, range: $state.usageRange, jevRange: $state.jevRange,
                       headerHeight: Self.headerHeight,
                       pageHeight: PageSizing.viewport(total: Theme.openHeight, header: Self.headerHeight,
                                                       spacing: DashboardMetrics.spacing, chrome: 2 * Self.padding),

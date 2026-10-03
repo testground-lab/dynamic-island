@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let arguments = Set(CommandLine.arguments)
     private var model: IslandModel!
     private var jev: JevUsageMonitor!
+    private let selection = DashboardSelection()
     private var settings: SettingsWindowController!
     private var notch: NotchController?
     private var menuBar: MenuBarController?
@@ -53,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 : JevUsageMonitor(directory: JevUsageMonitor.defaultDirectory)
         }
         jev.start()
+        if let page = Self.value(after: "--page").flatMap(DashboardPage.init(rawValue:)) { selection.page = page }
         settings = SettingsWindowController(model: model)
 
         layoutForScreens()
@@ -76,8 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let notch {
                 notch.place(on: screen)
             } else {
-                notch = NotchController(model: model, jev: jev, screen: screen,
-                                        startPage: Self.value(after: "--page").flatMap(DashboardPage.init(rawValue:)) ?? .usage,
+                notch = NotchController(model: model, jev: jev, selection: selection, screen: screen,
                                         pinnedExpanded: arguments.contains("--expanded"),
                                         openSettings: openSettings, quit: quit)
             }
@@ -85,7 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             notch?.tearDown()
             notch = nil
             if menuBar == nil {
-                menuBar = MenuBarController(model: model, jev: jev, openSettings: openSettings, quit: quit)
+                menuBar = MenuBarController(model: model, jev: jev, selection: selection, openSettings: openSettings, quit: quit)
             }
         }
     }

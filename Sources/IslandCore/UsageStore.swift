@@ -207,6 +207,9 @@ private final class UsageDatabase: @unchecked Sendable {
 
 /// Quarter-hour history containing routing identities and counters, never request payloads or keys.
 public actor UsageStore {
+    /// Accept 183 days of records; prune only buckets strictly before the rounded cutoff.
+    static let retention: TimeInterval = 183 * 86400
+
     private let database: UsageDatabase
     private let calendar: Calendar
     private let nowProvider: @Sendable () -> Date
@@ -256,7 +259,7 @@ public actor UsageStore {
                 "INSERT OR IGNORE INTO meta(key, value) VALUES ('tracking_since', ?)",
                 [.real(trackingSince.timeIntervalSince1970)])
         }
-        let cutoff = Self.bucketStart(current.addingTimeInterval(-31 * 86400)) ?? 0
+        let cutoff = Self.bucketStart(current.addingTimeInterval(-Self.retention)) ?? 0
         var modelCache = Self.storedModels(database.handle, since: cutoff)
         self.collectionBeganAt = Self.trackingDate(database.handle)
         if !initialRecords.isEmpty {
@@ -309,7 +312,7 @@ public actor UsageStore {
         let version = Self.currentDataVersion(database.handle)
         let externalChange = version != dataVersion
         var modelCache = models
-        if externalChange, let cutoff = Self.bucketStart(now.addingTimeInterval(-31 * 86400)) {
+        if externalChange, let cutoff = Self.bucketStart(now.addingTimeInterval(-Self.retention)) {
             modelCache = Self.storedModels(database.handle, since: cutoff)
         }
         for attempt in 0..<2 {
@@ -337,7 +340,7 @@ public actor UsageStore {
         records.compactMap { record in
             let timestamp = record.timestamp ?? now
             guard timestamp.timeIntervalSince1970.isFinite,
-                timestamp >= now.addingTimeInterval(-31 * 86400)
+                timestamp >= now.addingTimeInterval(-Self.retention)
             else { return nil }
             let raw =
                 [record.model, record.alias].compactMap { $0 }.first { !$0.isEmpty } ?? "unknown"
@@ -452,11 +455,11 @@ public actor UsageStore {
         }
         var modelCache = models
         let externalChange = currentDataVersion(database) != expectedVersion
-        if !prune, externalChange, let oldest = bucketStart(now.addingTimeInterval(-31 * 86400)) {
+        if !prune, externalChange, let oldest = bucketStart(now.addingTimeInterval(-Self.retention)) {
             modelCache = storedModels(database, since: oldest)
             changed = true
         }
-        if prune, let oldest = bucketStart(now.addingTimeInterval(-31 * 86400)) {
+        if prune, let oldest = bucketStart(now.addingTimeInterval(-Self.retention)) {
             guard
                 UsageDatabase.execute(
                     database, "DELETE FROM buckets WHERE start < ?", [.integer(oldest)])
@@ -524,7 +527,7 @@ public actor UsageStore {
         Self.series(range, now: now, calendar: calendar, database: database.handle)
     }
 
-    /// Fetch all chart ranges from one committed 30-day bucket scan.
+    /// Fetch all chart ranges from one committed 26-week bucket scan.
     public func seriesAll(now: Date) -> [UsageRange: UsageSeries] {
         Self.seriesAll(now: now, calendar: calendar, database: database.handle)
     }
@@ -561,7 +564,7 @@ public actor UsageStore {
         now: Date, calendar: Calendar, database: OpaquePointer?
     ) -> [UsageRange: UsageSeries] {
         let trackingSince = trackingDate(database)
-        let rows = seriesRows(.month, now: now, calendar: calendar, database: database)
+        let rows = seriesRows(.halfYear, now: now, calendar: calendar, database: database)
         return Dictionary(uniqueKeysWithValues: UsageRange.allCases.map { range in
             (range, series(range, now: now, calendar: calendar, rows: rows,
                            trackingSince: trackingSince))

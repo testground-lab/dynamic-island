@@ -29,19 +29,21 @@ enum Snapshots {
             ("usage-today", model, jev, open, .usage, 236, .today),
             ("usage-7d", model, jev, open, .usage, 236, .week),
             ("usage-30d", model, jev, open, .usage, 236, .month),
+            ("usage-6m", model, jev, open, .usage, 236, .halfYear),
             ("open-no-key", keyless, jev, open, .usage, 0, .today),
             ("jev-today", model, jev, open, .jev, 0, .today),
             ("jev-7d", model, jev, open, .jev, 0, .week),
             ("jev-30d", model, jev, open, .jev, 0, .month),
+            ("jev-6m", model, jev, open, .jev, 0, .halfYear),
             ("jev-no-log", model, noJev, open, .jev, 0, .today),
         ]
         for (name, model, jev, presentation, page, offset, range) in states {
             let ui = IslandUIState()
             ui.notchSize = notch
             ui.presentation = presentation
-            ui.page = page
-            ui.usageRange = range
-            ui.jevRange = range
+            ui.selection.page = page
+            ui.selection.usageRange = range
+            ui.selection.jevRange = range
             ui.isSnapshot = true
             ui.snapshotOffset = offset
             let expanded = ui.isExpanded
@@ -59,7 +61,7 @@ enum Snapshots {
                           to: directory.appendingPathComponent(name + ".png"))
             }
         }
-        try write(PopoverDashboard(model: model, jev: jev, state: PopoverUIState(), snapshotOffset: 0, openSettings: {}),
+        try write(PopoverDashboard(model: model, jev: jev, state: DashboardSelection(), snapshotOffset: 0, openSettings: {}),
                   to: directory.appendingPathComponent("menubar-popover.png"))
     }
 

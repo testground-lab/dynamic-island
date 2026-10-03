@@ -1,14 +1,21 @@
 import IslandCore
 import SwiftUI
 
+/// Page and range choices of the dashboard. One instance lives as long as the
+/// app and is shared by the island and the menu-bar popover, so a display
+/// change that swaps one for the other keeps them.
+@MainActor @Observable
+final class DashboardSelection {
+    var page: DashboardPage = .usage
+    var usageRange: UsageRange = .today
+    var jevRange: UsageRange = .today
+}
+
 /// UI-only state shared between the notch window controller and the views.
 @MainActor @Observable
 final class IslandUIState {
+    let selection: DashboardSelection
     var presentation: IslandPresentation = .collapsed
-    var usageRange: UsageRange = .today
-    /// The open island's page; kept while the app runs, so it reopens where it was left.
-    var page: DashboardPage = .usage
-    var jevRange: UsageRange = .today
     /// Size of the hardware notch (or a stand-in on displays without one).
     var notchSize = CGSize(width: 190, height: 32)
     /// Island frame in window coordinates (top-left origin), used for hit-testing.
@@ -18,6 +25,10 @@ final class IslandUIState {
     var snapshotOffset: CGFloat?
     /// Offscreen rendering (no scroll views, see `Snapshots`).
     var isSnapshot = false
+
+    init(selection: DashboardSelection = DashboardSelection()) {
+        self.selection = selection
+    }
 
     var isExpanded: Bool {
         if case .expanded = presentation { return true }
@@ -81,10 +92,10 @@ struct IslandView: View {
     }
 
     private var expandedContent: some View {
-        @Bindable var ui = ui
+        @Bindable var selection = ui.selection
         let shoulder = NotchShape.shoulder(height: 200)
-        return DashboardView(model: model, jev: jev, page: $ui.page,
-                             range: $ui.usageRange, jevRange: $ui.jevRange,
+        return DashboardView(model: model, jev: jev, page: $selection.page,
+                             range: $selection.usageRange, jevRange: $selection.jevRange,
                              headerHeight: ui.notchSize.height,
                              cameraGap: ui.notchSize.width,
                              pageHeight: PageSizing.viewport(total: Theme.openHeight, header: ui.notchSize.height,

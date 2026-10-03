@@ -662,6 +662,7 @@ extension UsageRange {
         case .today: "Today"
         case .week: "Last 7 days"
         case .month: "Last 30 days"
+        case .halfYear: "Last 6 months"
         }
     }
 }

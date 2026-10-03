@@ -75,6 +75,10 @@ struct JevPage: View {
                     if t.failed > 0 {
                         Text("· \(t.failed) failed").font(.system(size: 9.5)).foregroundStyle(Theme.warning)
                     }
+                    if t.late > 0 {
+                        Text("· \(t.late) late").font(.system(size: 9.5)).foregroundStyle(Theme.secondary)
+                            .help("Answered after the router's timeout; still billed, so counted in tokens and spend.")
+                    }
                 }
                 Text("in \(Format.tokens(t.inputTokens)) · out \(Format.tokens(t.outputTokens))")
                     .font(.system(size: 9.5))

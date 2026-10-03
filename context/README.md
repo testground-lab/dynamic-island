@@ -24,12 +24,13 @@ Requirements and decisions for this project, one per file, so new sessions have 
 - [14-two-pages](requirements/14-two-pages.md): Separate Limits and Usage pages (superseded)
 - [15-height-up-to-60-percent](requirements/15-height-up-to-60-percent.md): Open island grows up to 60% of the screen (superseded)
 - [16-swipe-pages-jev](requirements/16-swipe-pages-jev.md): Two swipe pages: AI usage, then Jev usage
+- [17-six-month-range](requirements/17-six-month-range.md): 6m range (weekly bars) on both pages
 
 ## Decisions
 - [0001-native-swiftui-lsuielement](decisions/0001-native-swiftui-lsuielement.md): Native SwiftUI app, LSUIElement
 - [0002-management-key-in-keychain](decisions/0002-management-key-in-keychain.md): Management key in Keychain only
 - [0003-endpoints](decisions/0003-endpoints.md): Management endpoints used
-- [0004-usage-history-sqlite](decisions/0004-usage-history-sqlite.md): Persist usage as 15-minute buckets in SQLite
+- [0004-usage-history-sqlite](decisions/0004-usage-history-sqlite.md): Persist usage as 15-minute buckets in SQLite (retention superseded by 0013)
 - [0005-web-panel-competes](decisions/0005-web-panel-competes.md): The CLIProxyAPI web panel competes for queue records
 - [0006-attribution-by-auth-index](decisions/0006-attribution-by-auth-index.md): Per-account attribution via auth_index
 - [0007-interactions](decisions/0007-interactions.md): Interaction model
@@ -38,6 +39,7 @@ Requirements and decisions for this project, one per file, so new sessions have 
 - [0010-macos-15-minimum](decisions/0010-macos-15-minimum.md): macOS 15 minimum
 - [0011-review-process](decisions/0011-review-process.md): Review process
 - [0012-jev-usage-from-router-log](decisions/0012-jev-usage-from-router-log.md): Jev usage from the router's local log, not the console API
+- [0013-usage-retention-183-days](decisions/0013-usage-retention-183-days.md): Keep usage history 183 days
 
 ## Open items
 - [open-items](open-items.md): undecided labels and what still needs checking on screen

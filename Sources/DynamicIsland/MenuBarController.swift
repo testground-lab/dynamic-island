@@ -7,7 +7,7 @@ import SwiftUI
 @MainActor
 final class MenuBarController: NSObject {
     private let model: IslandModel
-    private let state: DashboardSelection
+    private let selection: DashboardSelection
     private var gesture = ScrollGestureRecognizer()
     private var scrollMonitor: Any?
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -19,7 +19,7 @@ final class MenuBarController: NSObject {
     init(model: IslandModel, jev: JevUsageMonitor, selection: DashboardSelection,
          openSettings: @escaping () -> Void, quit: @escaping () -> Void) {
         self.model = model
-        state = selection
+        self.selection = selection
         self.openSettings = openSettings
         self.quit = quit
         super.init()
@@ -27,7 +27,7 @@ final class MenuBarController: NSObject {
         popover.behavior = .transient
         popover.appearance = NSAppearance(named: .darkAqua)
         popover.contentViewController = NSHostingController(rootView:
-            PopoverDashboard(model: model, jev: jev, state: state, openSettings: { [weak self] in
+            PopoverDashboard(model: model, jev: jev, selection: selection, openSettings: { [weak self] in
                 self?.popover.performClose(nil)
                 openSettings()
             })
@@ -55,8 +55,8 @@ final class MenuBarController: NSObject {
                                            precise: event.hasPreciseScrollingDeltas,
                                            expanded: true, verticalAllowed: false)
             guard let action, action == .nextPage || action == .previousPage else { return event }
-            let target = self.state.page.applying(action)
-            if target != self.state.page { withAnimation(Theme.page) { self.state.page = target } }
+            let target = self.selection.page.applying(action)
+            if target != self.selection.page { withAnimation(Theme.page) { self.selection.page = target } }
             return nil
         }
     }
@@ -128,7 +128,7 @@ final class MenuBarController: NSObject {
 struct PopoverDashboard: View {
     let model: IslandModel
     let jev: JevUsageMonitor
-    @Bindable var state: DashboardSelection
+    @Bindable var selection: DashboardSelection
     var snapshotOffset: CGFloat?
     var openSettings: () -> Void
 
@@ -136,7 +136,7 @@ struct PopoverDashboard: View {
     static let padding: CGFloat = 12
 
     var body: some View {
-        DashboardView(model: model, jev: jev, page: $state.page, range: $state.usageRange, jevRange: $state.jevRange,
+        DashboardView(model: model, jev: jev, page: $selection.page, range: $selection.usageRange, jevRange: $selection.jevRange,
                       headerHeight: Self.headerHeight,
                       pageHeight: PageSizing.viewport(total: Theme.openHeight, header: Self.headerHeight,
                                                       spacing: DashboardMetrics.spacing, chrome: 2 * Self.padding),

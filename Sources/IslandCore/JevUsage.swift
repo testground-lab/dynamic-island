@@ -56,6 +56,15 @@ public struct JevLogFile: Equatable, Sendable {
             Date(timeIntervalSince1970: Double(modifiedNanoseconds) / 1_000_000_000)
         }
 
+        init(_ attributes: stat) {
+            self.init(
+                inode: UInt64(attributes.st_ino), size: UInt64(max(0, attributes.st_size)),
+                modifiedNanoseconds: Int64(attributes.st_mtimespec.tv_sec) * 1_000_000_000
+                    + Int64(attributes.st_mtimespec.tv_nsec),
+                changedNanoseconds: Int64(attributes.st_ctimespec.tv_sec) * 1_000_000_000
+                    + Int64(attributes.st_ctimespec.tv_nsec))
+        }
+
         public init(inode: UInt64, size: UInt64, modifiedNanoseconds: Int64, changedNanoseconds: Int64) {
             self.inode = inode
             self.size = size
@@ -99,10 +108,6 @@ public enum JevLog {
     public static func parse(_ data: Data) -> JevLogParse {
         var calls: [JevCall] = []
         var skipped = 0
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let whole = ISO8601DateFormatter()
-        whole.formatOptions = [.withInternetDateTime]
         for bytes in data.split(separator: 10, omittingEmptySubsequences: false) {
             var line = Data(bytes)
             if line.last == 13 { line.removeLast() }
@@ -115,7 +120,7 @@ public enum JevLog {
             guard let object = try? JSONSerialization.jsonObject(with: line),
                 let fields = object as? [String: Any],
                 let rawDate = fields["ts"] as? String,
-                let timestamp = timestamp(rawDate, fractional: fractional, whole: whole)
+                let timestamp = APIDateParser.parse(rawDate)
             else {
                 skipped = addingCounts(skipped, 1)
                 continue
@@ -139,29 +144,12 @@ public enum JevLog {
         return JevLogParse(calls: sorted, skippedLines: skipped)
     }
 
-    private static func timestamp(
-        _ raw: String, fractional: ISO8601DateFormatter, whole: ISO8601DateFormatter
-    ) -> Date? {
-        let normalized = raw.replacingOccurrences(
-            of: #"(\.\d{3})\d+(?=Z|[+-]\d{2}:\d{2}$)"#, with: "$1", options: .regularExpression)
-        return fractional.date(from: normalized) ?? whole.date(from: normalized)
-    }
-
     private static func metadata(_ url: URL) throws -> stat {
         var attributes = stat()
         guard stat(url.path, &attributes) == 0 else {
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
         }
         return attributes
-    }
-
-    private static func signature(_ attributes: stat) -> JevLogFile.Signature {
-        JevLogFile.Signature(
-            inode: UInt64(attributes.st_ino), size: UInt64(max(0, attributes.st_size)),
-            modifiedNanoseconds: Int64(attributes.st_mtimespec.tv_sec) * 1_000_000_000
-                + Int64(attributes.st_mtimespec.tv_nsec),
-            changedNanoseconds: Int64(attributes.st_ctimespec.tv_sec) * 1_000_000_000
-                + Int64(attributes.st_ctimespec.tv_nsec))
     }
 
     private static func count(_ value: Any?) -> Int? {
@@ -175,6 +163,13 @@ public enum JevLog {
 
     public static func scan(
         directory: URL, previous: [String: JevLogFile], modifiedSince: Date
+    ) -> JevLogScan {
+        scan(directory: directory, previous: previous, modifiedSince: modifiedSince, readFile: read)
+    }
+
+    static func scan(
+        directory: URL, previous: [String: JevLogFile], modifiedSince: Date,
+        readFile: (URL) -> JevLogRead
     ) -> JevLogScan {
         let manager = FileManager.default
         let names: [String]
@@ -206,7 +201,7 @@ public enum JevLog {
             do {
                 let attributes = try metadata(url)
                 guard attributes.st_mode & S_IFMT == S_IFREG else { continue }
-                signature = Self.signature(attributes)
+                signature = JevLogFile.Signature(attributes)
                 if signature.modified < modifiedSince {
                     latestOutsideWindow = max(latestOutsideWindow ?? .distantPast, signature.modified)
                     continue
@@ -225,13 +220,13 @@ public enum JevLog {
             let nextBytes = totalBytes + signature.size
             guard nextBytes <= UInt64(maximumBytes) else {
                 let megabytes = Int(ceil(Double(nextBytes) / (1024 * 1024)))
-                return JevLogScan(read: .unreadable("Too large to read (\(megabytes) MB)"), files: [:])
+                return JevLogScan(read: .unreadable("Too large to read (\(megabytes) MB)"), files: files)
             }
             let file: JevLogFile
             if let cached = previous[name], cached.signature == signature {
                 file = cached
             } else {
-                switch read(url) {
+                switch readFile(url) {
                 case .loaded(let parsed):
                     file = JevLogFile(signature: signature, calls: parsed.calls,
                                       skippedLines: parsed.skippedLines)
@@ -247,7 +242,7 @@ public enum JevLog {
             calls.append(contentsOf: file.calls)
             skipped = addingCounts(skipped, file.skippedLines)
         }
-        guard !files.isEmpty || latestOutsideWindow != nil else {
+        guard !files.isEmpty || (latestOutsideWindow != nil && firstFailure == nil) else {
             return JevLogScan(read: firstFailure.map { .unreadable($0) } ?? .missing, files: [:])
         }
         let warning = firstFailure.map {
@@ -517,7 +512,7 @@ public enum JevViewState: Equatable, Sendable {
             var lastCall = scan.latestOutsideWindow
             if case .loaded(let parsed) = scan.read {
                 let end = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: date)) ?? date
-                lastCall = parsed.calls.last { $0.timestamp >= start && $0.timestamp < end }?.timestamp
+                lastCall = parsed.calls.last { $0.timestamp < end }?.timestamp
                     ?? lastCall
             }
             return Reload(scan: scan, key: currentKey, lastCall: lastCall,
@@ -585,12 +580,15 @@ public enum JevViewState: Equatable, Sendable {
                 guard let timestamp = calendar.date(bySettingHour: 9 + random(11),
                     minute: random(60), second: random(60), of: day), timestamp <= now
                 else { continue }
-                let failed = random(100) < 3
+                let outcome = random(100)
+                let failed = outcome < 3
+                let late = (3..<5).contains(outcome)
                 monitor.calls.append(JevCall(
                     timestamp: timestamp, model: "jev-latest",
                     inputTokens: failed ? 0 : 800 + random(5201),
                     outputTokens: failed ? 0 : 100 + random(201), latencyMs: 200 + random(1000),
-                    ok: !failed, error: failed ? (random(2) == 0 ? "timeout" : "http_502") : nil))
+                    ok: !failed && !late,
+                    error: failed ? (random(2) == 0 ? "timeout" : "http_502") : (late ? "timeout" : nil)))
             }
         }
         monitor.calls.sort { $0.timestamp < $1.timestamp }

@@ -163,7 +163,8 @@ public enum UsageRange: String, CaseIterable, Hashable, Sendable {
         let today = calendar.startOfDay(for: now)
         if self == .halfYear {
             let week = calendar.dateInterval(of: .weekOfYear, for: today)?.start ?? today
-            return calendar.date(byAdding: .weekOfYear, value: -25, to: week) ?? week
+            let earlier = calendar.date(byAdding: .weekOfYear, value: -25, to: week) ?? week
+            return calendar.dateInterval(of: .weekOfYear, for: earlier)?.start ?? earlier
         }
         let days = self == .today ? 0 : self == .week ? -6 : -29
         return calendar.date(byAdding: .day, value: days, to: today) ?? today

@@ -11,14 +11,28 @@ public struct FlexibleNumber: Decodable, Sendable {
 }
 
 public enum APIDateParser {
-    public static func parse(_ string: String) -> Date? {
-        // Foundation accepts millisecond precision; normalize Go's nanosecond timestamps.
-        let normalized = string.replacingOccurrences(of: #"(\.\d{3})\d+(?=Z|[+-]\d{2}:\d{2}$)"#, with: "$1", options: .regularExpression)
+    // ISO8601DateFormatter is thread-safe; these options never change after initialization.
+    nonisolated(unsafe) private static let fractional: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = formatter.date(from: normalized) { return date }
+        return formatter
+    }()
+    nonisolated(unsafe) private static let whole: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: normalized)
+        return formatter
+    }()
+
+    public static func parse(_ string: String) -> Date? {
+        var normalized = string
+        if let dot = string.firstIndex(of: "."),
+            let fourth = string.index(dot, offsetBy: 4, limitedBy: string.endIndex),
+            fourth < string.endIndex, string[fourth].isNumber {
+            // Foundation accepts millisecond precision; normalize Go's nanosecond timestamps.
+            normalized = string.replacingOccurrences(
+                of: #"(\.\d{3})\d+(?=Z|[+-]\d{2}:\d{2}$)"#, with: "$1", options: .regularExpression)
+        }
+        return fractional.date(from: normalized) ?? whole.date(from: normalized)
     }
 }
 

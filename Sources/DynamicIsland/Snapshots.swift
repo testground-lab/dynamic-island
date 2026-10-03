@@ -61,7 +61,7 @@ enum Snapshots {
                           to: directory.appendingPathComponent(name + ".png"))
             }
         }
-        try write(PopoverDashboard(model: model, jev: jev, state: DashboardSelection(), snapshotOffset: 0, openSettings: {}),
+        try write(PopoverDashboard(model: model, jev: jev, selection: DashboardSelection(), snapshotOffset: 0, openSettings: {}),
                   to: directory.appendingPathComponent("menubar-popover.png"))
     }
 

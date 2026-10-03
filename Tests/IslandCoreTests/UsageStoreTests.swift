@@ -195,11 +195,12 @@ private final class StoreClock: @unchecked Sendable {
     defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
     let clock = StoreClock()
     let store = UsageStore(url: url, calendar: utc(), now: { clock.now() })
-    await store.ingest([sample(at: reference.addingTimeInterval(-182 * 86400))])
-    #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets") == 1)
-    clock.advance(2 * 86400)
+    await store.ingest([sample("old", at: reference.addingTimeInterval(-182 * 86400)),
+                        sample("recent", at: reference)])
+    #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets") == 2)
+    clock.advance(1.5 * 86400)
     await store.ingest([])
-    #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets") == 0)
+    #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets") == 1)
     #expect(await store.report(.month, accounts: [], now: clock.now()).trackingSince == reference)
 }
 
@@ -469,7 +470,8 @@ func todayIncludesMidnightBucketButNotPreviousMinute(_ zone: String, _ edge: Str
   defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
   let clock = StoreClock()
   let store = UsageStore(url: url, calendar: utc(), now: { clock.now() })
-  await store.ingest([])
+  // Recent usage, so the clock fits the stored history and the prune may run.
+  await store.ingest([sample(at: reference)])
   let connection = try StoreTestConnection(url)
   // Expired history inserted externally makes the next pruning pass observable.
   try connection.execute("INSERT INTO buckets VALUES (0, '', '', 'expired', 1, 0, 0, 0, 0)")

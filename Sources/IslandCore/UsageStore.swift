@@ -209,6 +209,9 @@ private final class UsageDatabase: @unchecked Sendable {
 public actor UsageStore {
     /// Accept 183 days of records; prune only buckets strictly before the rounded cutoff.
     static let retention: TimeInterval = 183 * 86400
+    /// The prune is skipped while the clock is further than this past the newest stored
+    /// bucket: a clock set months ahead must not delete the history.
+    static let pruneClockTolerance: TimeInterval = 2 * 86400
 
     private let database: UsageDatabase
     private let calendar: Calendar
@@ -459,7 +462,8 @@ public actor UsageStore {
             modelCache = storedModels(database, since: oldest)
             changed = true
         }
-        if prune, let oldest = bucketStart(now.addingTimeInterval(-Self.retention)) {
+        if prune, clockFitsHistory(database, now: now),
+            let oldest = bucketStart(now.addingTimeInterval(-Self.retention)) {
             guard
                 UsageDatabase.execute(
                     database, "DELETE FROM buckets WHERE start < ?", [.integer(oldest)])
@@ -684,6 +688,18 @@ public actor UsageStore {
         else { return nil }
         let seconds = sqlite3_column_double(query.handle, 0)
         return seconds.isFinite ? Date(timeIntervalSince1970: seconds) : nil
+    }
+
+    /// False when `now` is more than `pruneClockTolerance` past the newest bucket. Runs before
+    /// this ingest's rows are written, so records stamped by a wrong clock don't vouch for it on
+    /// their first prune. After a long break the prune waits until new usage is recorded.
+    private static func clockFitsHistory(_ database: OpaquePointer?, now: Date) -> Bool {
+        guard let query = UsageStatement(database, "SELECT MAX(start) FROM buckets"),
+            sqlite3_step(query.handle) == SQLITE_ROW,
+            sqlite3_column_type(query.handle, 0) != SQLITE_NULL
+        else { return true } // nothing stored, nothing to delete
+        let newest = sqlite3_column_double(query.handle, 0)
+        return now.timeIntervalSince1970 - newest <= pruneClockTolerance
     }
 
     private static func currentDataVersion(_ database: OpaquePointer?) -> Int {

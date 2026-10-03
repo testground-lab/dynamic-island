@@ -24,7 +24,8 @@ extension UsageSeries {
         while cursor < end {
             let boundary: Date
             if range.granularity == .week {
-                boundary = calendar.date(byAdding: .weekOfYear, value: 1, to: cursor) ?? end
+                // The week's own end, so a day without a local midnight can't shift later weeks.
+                boundary = calendar.dateInterval(of: .weekOfYear, for: cursor)?.end ?? end
             } else {
                 boundary = range.granularity == .hour
                     ? calendar.nextDate(after: cursor, matching: DateComponents(minute: 0, second: 0),

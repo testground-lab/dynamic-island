@@ -124,7 +124,10 @@ private func seedRetentionDatabase(_ url: URL, now: Date, ages: [Int]) throws {
 func realDatabaseCopyPrunesOnlyBucketsOlderThanRetention() async throws {
   let path = try #require(ProcessInfo.processInfo.environment["DI_DB_COPY"])
   let source = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
-  try #require(!source.path.contains("Application Support/DynamicIsland"))
+  let live = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    .appendingPathComponent("DynamicIsland").resolvingSymlinksInPath().path
+  try #require(source.path.range(of: live, options: [.caseInsensitive, .anchored]) == nil
+    && source.path.range(of: "application support/dynamicisland", options: .caseInsensitive) == nil)
   let url = try retentionDatabaseURL()
   defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
   for suffix in ["", "-wal", "-shm"] {
@@ -137,12 +140,14 @@ func realDatabaseCopyPrunesOnlyBucketsOlderThanRetention() async throws {
   let connection = try RetentionConnection(url)
   let before = try connection.count("SELECT COUNT(*) FROM buckets")
   let expired = try connection.count("SELECT COUNT(*) FROM buckets WHERE start < \(cutoff)")
+  let newest = try connection.count("SELECT COALESCE(MAX(start), 0) FROM buckets")
+  // With no usage in the last two days the clock guard holds the prune back.
+  let prunes = before == 0 || now.timeIntervalSince1970 - Double(newest) <= UsageStore.pruneClockTolerance
   let store = UsageStore(url: url, now: { now })
   await store.ingest([])
   let after = try connection.count("SELECT COUNT(*) FROM buckets")
-  print("Retention copy: before=\(before), expired=\(expired), after=\(after), cutoff=\(cutoff)")
-  #expect(after == before - expired)
-  #expect(try connection.count("SELECT COUNT(*) FROM buckets WHERE start < \(cutoff)") == 0)
+  print("Retention copy: before=\(before), expired=\(expired), prunes=\(prunes), after=\(after), cutoff=\(cutoff)")
+  #expect(after == (prunes ? before - expired : before))
 }
 
 @Test func pruningUsesStrictRoundedBucketCutoff() async throws {
@@ -153,7 +158,8 @@ func realDatabaseCopyPrunesOnlyBucketsOlderThanRetention() async throws {
   try seedRetentionDatabase(url, now: now, ages: [])
   do {
     let writer = try RetentionConnection(url, create: true)
-    for start in [cutoff - 900, cutoff, cutoff + 900] {
+    // A recent bucket too: the prune only runs when the clock fits the stored history.
+    for start in [cutoff - 900, cutoff, cutoff + 900, retentionBucketStart(now) - 900] {
       try writer.execute("""
         INSERT INTO buckets VALUES (\(start), '', 'claude', 'model', 1, 0, 10, 20, 30)
         """)
@@ -162,7 +168,7 @@ func realDatabaseCopyPrunesOnlyBucketsOlderThanRetention() async throws {
   let store = UsageStore(url: url, calendar: retentionCalendar(), now: { now })
   await store.ingest([])
   let connection = try RetentionConnection(url)
-  #expect(try connection.count("SELECT COUNT(*) FROM buckets") == 2)
+  #expect(try connection.count("SELECT COUNT(*) FROM buckets") == 3)
   #expect(try connection.count("SELECT COUNT(*) FROM buckets WHERE start = \(cutoff)") == 1)
   #expect(try connection.count("SELECT COUNT(*) FROM buckets WHERE start < \(cutoff)") == 0)
 }
@@ -182,4 +188,35 @@ func halfYearRangeStaysInsideRetention(_ firstWeekday: Int, _ zone: String) thro
     }
     day = try #require(calendar.date(byAdding: .day, value: 1, to: day))
   }
+}
+
+/// A clock far ahead of the newest stored bucket (e.g. set months wrong) must not prune history.
+@Test func pruneIsSkippedWhileTheClockIsFarAheadOfStoredHistory() async throws {
+  let url = try retentionDatabaseURL()
+  defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+  let real = Fixtures.referenceNow
+  try seedRetentionDatabase(url, now: real, ages: [1, 100, 182])
+  let wrong = real.addingTimeInterval(120 * 86400)
+  let store = UsageStore(url: url, calendar: retentionCalendar(), now: { wrong })
+  var record = UsageRecord(timestamp: wrong, model: "model",
+                           tokens: UsageTokens(inputTokens: 1, outputTokens: 1, totalTokens: 2))
+  record.authIndex = "a"
+  record.provider = "claude"
+  await store.ingest([record])
+  let connection = try RetentionConnection(url)
+  // Nothing deleted although 100 and 182 days are past "wrong - 183 days"; the new record is kept.
+  #expect(try connection.count("SELECT COUNT(*) FROM buckets") == 4)
+}
+
+@Test func pruneRunsWhenTheClockIsWithinToleranceOfStoredHistory() async throws {
+  let url = try retentionDatabaseURL()
+  defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+  let real = Fixtures.referenceNow
+  try seedRetentionDatabase(url, now: real, ages: [1, 184])
+  // Newest bucket a day old, clock one more day on: inside the 2-day tolerance.
+  let store = UsageStore(url: url, calendar: retentionCalendar(),
+                         now: { real.addingTimeInterval(UsageStore.pruneClockTolerance - 86400 - 3600) })
+  await store.ingest([])
+  let connection = try RetentionConnection(url)
+  #expect(try connection.count("SELECT COUNT(*) FROM buckets") == 1)
 }

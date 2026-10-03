@@ -6,4 +6,4 @@
 
 **Status:** current (extends [06](06-usage-by-account-and-model.md), [10](10-token-bar-chart.md) and [16](16-swipe-pages-jev.md))
 
-**Where in code:** `IslandCore/Domain.swift` (`UsageRange.halfYear`, `chartEnd`, `UsageGranularity.week`), `IslandCore/SeriesBinning.swift`, `IslandCore/ChartLayout.swift`, `TokenChart.swift`
+**Where in code:** `IslandCore/UsageStore.swift` (`retention`), `IslandCore/Domain.swift` (`UsageRange.halfYear`, `chartEnd`, `UsageGranularity.week`), `IslandCore/SeriesBinning.swift`, `IslandCore/ChartLayout.swift`, `TokenChart.swift`

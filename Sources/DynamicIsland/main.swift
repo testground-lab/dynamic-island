@@ -5,11 +5,16 @@ import IslandCore
 ///   --demo      render bundled fixtures, no network, no Keychain
 ///   --expanded  keep the island expanded
 ///   --menubar   force the menu-bar fallback even on a notched display
+///   --page jev  open on the Jev page
+///   --range <today|week|month|halfYear>  start both pages on this range
+///   --jev-dir <dir>  read Jev usage logs from this folder instead of the router's (also with --demo)
 ///   --snapshot <dir>  render demo PNGs and exit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let arguments = Set(CommandLine.arguments)
     private var model: IslandModel!
+    private var jev: JevUsageMonitor!
+    private let selection = DashboardSelection()
     private var settings: SettingsWindowController!
     private var notch: NotchController?
     private var menuBar: MenuBarController?
@@ -17,13 +22,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let index = CommandLine.arguments.firstIndex(of: "--snapshot"), index + 1 < CommandLine.arguments.count {
-            do {
-                try Snapshots.render(to: URL(fileURLWithPath: CommandLine.arguments[index + 1]))
-                exit(0)
-            } catch {
-                FileHandle.standardError.write(Data("snapshot failed: \(error)\n".utf8))
-                exit(1)
+            let directory = URL(fileURLWithPath: CommandLine.arguments[index + 1])
+            Task { @MainActor in
+                do {
+                    try await Snapshots.render(to: directory)
+                    exit(0)
+                } catch {
+                    FileHandle.standardError.write(Data("snapshot failed: \(error)\n".utf8))
+                    exit(1)
+                }
             }
+            return
         }
         NSApp.setActivationPolicy(.accessory) // no Dock icon, also when run unbundled
         NSApp.mainMenu = Self.makeMainMenu()
@@ -37,6 +46,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let store = UsageStore(url: support.appendingPathComponent("usage.sqlite"))
             model = IslandModel(keyStore: KeychainKeyStore(), store: store)
             model.start()
+        }
+        // --demo shows a fixture unless --jev-dir points at real logs.
+        if let path = Self.value(after: "--jev-dir") {
+            jev = JevUsageMonitor(directory: URL(fileURLWithPath: path, isDirectory: true))
+        } else {
+            jev = arguments.contains("--demo") ? JevUsageMonitor.demo()
+                : JevUsageMonitor(directory: JevUsageMonitor.defaultDirectory)
+        }
+        jev.start()
+        if let page = Self.value(after: "--page").flatMap(DashboardPage.init(rawValue:)) { selection.page = page }
+        if let range = Self.value(after: "--range").flatMap(UsageRange.init(rawValue:)) {
+            selection.usageRange = range
+            selection.jevRange = range
         }
         settings = SettingsWindowController(model: model)
 
@@ -61,16 +83,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let notch {
                 notch.place(on: screen)
             } else {
-                notch = NotchController(model: model, screen: screen, pinnedExpanded: arguments.contains("--expanded"),
+                notch = NotchController(model: model, jev: jev, selection: selection, screen: screen,
+                                        pinnedExpanded: arguments.contains("--expanded"),
                                         openSettings: openSettings, quit: quit)
             }
         } else {
             notch?.tearDown()
             notch = nil
             if menuBar == nil {
-                menuBar = MenuBarController(model: model, openSettings: openSettings, quit: quit)
+                menuBar = MenuBarController(model: model, jev: jev, selection: selection, openSettings: openSettings, quit: quit)
             }
         }
+    }
+
+    private static func value(after flag: String) -> String? {
+        guard let index = CommandLine.arguments.firstIndex(of: flag), index + 1 < CommandLine.arguments.count
+        else { return nil }
+        return CommandLine.arguments[index + 1]
     }
 
     /// Accessory apps show no menu bar, but the key equivalents of the main menu
@@ -100,6 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         model?.stop()
+        jev?.stop()
     }
 }
 

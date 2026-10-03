@@ -4,6 +4,6 @@
 
 **Source:** User feedback, 2026-10-02.
 
-**Status:** current (supersedes the two-page Limits/Usage design)
+**Status:** partly superseded by [16](16-swipe-pages-jev.md): Limits then Usage is still one scrolling page (page one), but the island now has page dots and a sideways swipe to a second (Jev) page. Originally superseded the two-page Limits/Usage design.
 
 **Where in code:** `DashboardView.swift`

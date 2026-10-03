@@ -62,7 +62,7 @@ private final class StoreClock: @unchecked Sendable {
 }
 
 @Test func usageRangeTitlesAndCalendarBoundaries() {
-    #expect(UsageRange.allCases.map(\.title) == ["Today", "7d", "30d"])
+    #expect(UsageRange.allCases.map(\.title) == ["Today", "7d", "30d", "6m"])
     #expect(
         UsageRange.today.start(now: reference, calendar: utc())
             == APIDateParser.parse("2026-10-02T00:00:00Z"))
@@ -179,7 +179,7 @@ private final class StoreClock: @unchecked Sendable {
     let store = UsageStore(url: nil, calendar: utc(), now: { reference })
     await store.ingest([
         sample("future", at: reference.addingTimeInterval(100 * 86400)),
-        sample("too-old", at: reference.addingTimeInterval(-31 * 86400 - 1)),
+        sample("too-old", at: reference.addingTimeInterval(-183 * 86400 - 1)),
         sample(String(repeating: "x", count: 100)),
         sample(String(repeating: "x", count: 64) + "suffix"),
     ])
@@ -190,16 +190,17 @@ private final class StoreClock: @unchecked Sendable {
     #expect(report.byModel.allSatisfy { $0.model.count <= 64 })
 }
 
-@Test func pruningRemovesHistoryOlderThanThirtyOneDays() async throws {
+@Test func pruningRemovesHistoryOlderThanOneHundredEightyThreeDays() async throws {
     let url = try databaseURL()
     defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
     let clock = StoreClock()
     let store = UsageStore(url: url, calendar: utc(), now: { clock.now() })
-    await store.ingest([sample(at: reference.addingTimeInterval(-30 * 86400))])
-    #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets") == 1)
-    clock.advance(2 * 86400)
+    await store.ingest([sample("old", at: reference.addingTimeInterval(-182 * 86400)),
+                        sample("recent", at: reference)])
+    #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets") == 2)
+    clock.advance(1.5 * 86400)
     await store.ingest([])
-    #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets") == 0)
+    #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets") == 1)
     #expect(await store.report(.month, accounts: [], now: clock.now()).trackingSince == reference)
 }
 
@@ -337,7 +338,7 @@ private final class StoreClock: @unchecked Sendable {
         if model.lastUpdated != nil { break }
         try? await Task.sleep(for: .milliseconds(1))
     }
-    #expect(model.usageReports.count == 3)
+    #expect(model.usageReports.count == UsageRange.allCases.count)
     #expect(model.usageReports[.today]?.totals.requests == 12)
     #expect(model.usageReports[.today]?.byModel.count == 3)
     #expect(
@@ -469,7 +470,8 @@ func todayIncludesMidnightBucketButNotPreviousMinute(_ zone: String, _ edge: Str
   defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
   let clock = StoreClock()
   let store = UsageStore(url: url, calendar: utc(), now: { clock.now() })
-  await store.ingest([])
+  // Recent usage, so the clock fits the stored history and the prune may run.
+  await store.ingest([sample(at: reference)])
   let connection = try StoreTestConnection(url)
   // Expired history inserted externally makes the next pruning pass observable.
   try connection.execute("INSERT INTO buckets VALUES (0, '', '', 'expired', 1, 0, 0, 0, 0)")
@@ -622,4 +624,19 @@ func pendingOverflowFoldsOldestKeysWithoutLosingCounters(uniqueAccounts: Bool) a
     #expect(report.totals.totalTokens == 42_700)
     #expect(await store.ingest([]) == false)
     #expect(await store.report(.today, accounts: [], now: reference) == report)
+}
+
+@Test func ingestAcceptsRetentionBoundaryAndRejectsOlderRecords() async throws {
+    let url = try databaseURL()
+    defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    let store = UsageStore(url: url, calendar: utc(), now: { reference })
+    await store.ingest([
+        sample("rejected", at: reference.addingTimeInterval(-183 * 86400 - 1)),
+        sample("boundary", at: reference.addingTimeInterval(-183 * 86400)),
+        sample("accepted", at: reference.addingTimeInterval(-183 * 86400 + 900)),
+    ])
+    #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets") == 2)
+    #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets WHERE model = 'rejected'") == 0)
+    #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets WHERE model = 'boundary'") == 1)
+    #expect(try sqliteInteger(url, sql: "SELECT COUNT(*) FROM buckets WHERE model = 'accepted'") == 1)
 }

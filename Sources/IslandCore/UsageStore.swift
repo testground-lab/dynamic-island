@@ -207,6 +207,12 @@ private final class UsageDatabase: @unchecked Sendable {
 
 /// Quarter-hour history containing routing identities and counters, never request payloads or keys.
 public actor UsageStore {
+    /// Accept 183 days of records; prune only buckets strictly before the rounded cutoff.
+    static let retention: TimeInterval = 183 * 86400
+    /// The prune is skipped while the clock is further than this past the newest stored
+    /// bucket: a clock set months ahead must not delete the history.
+    static let pruneClockTolerance: TimeInterval = 2 * 86400
+
     private let database: UsageDatabase
     private let calendar: Calendar
     private let nowProvider: @Sendable () -> Date
@@ -256,7 +262,7 @@ public actor UsageStore {
                 "INSERT OR IGNORE INTO meta(key, value) VALUES ('tracking_since', ?)",
                 [.real(trackingSince.timeIntervalSince1970)])
         }
-        let cutoff = Self.bucketStart(current.addingTimeInterval(-31 * 86400)) ?? 0
+        let cutoff = Self.bucketStart(current.addingTimeInterval(-Self.retention)) ?? 0
         var modelCache = Self.storedModels(database.handle, since: cutoff)
         self.collectionBeganAt = Self.trackingDate(database.handle)
         if !initialRecords.isEmpty {
@@ -309,7 +315,7 @@ public actor UsageStore {
         let version = Self.currentDataVersion(database.handle)
         let externalChange = version != dataVersion
         var modelCache = models
-        if externalChange, let cutoff = Self.bucketStart(now.addingTimeInterval(-31 * 86400)) {
+        if externalChange, let cutoff = Self.bucketStart(now.addingTimeInterval(-Self.retention)) {
             modelCache = Self.storedModels(database.handle, since: cutoff)
         }
         for attempt in 0..<2 {
@@ -337,7 +343,7 @@ public actor UsageStore {
         records.compactMap { record in
             let timestamp = record.timestamp ?? now
             guard timestamp.timeIntervalSince1970.isFinite,
-                timestamp >= now.addingTimeInterval(-31 * 86400)
+                timestamp >= now.addingTimeInterval(-Self.retention)
             else { return nil }
             let raw =
                 [record.model, record.alias].compactMap { $0 }.first { !$0.isEmpty } ?? "unknown"
@@ -452,11 +458,12 @@ public actor UsageStore {
         }
         var modelCache = models
         let externalChange = currentDataVersion(database) != expectedVersion
-        if !prune, externalChange, let oldest = bucketStart(now.addingTimeInterval(-31 * 86400)) {
+        if !prune, externalChange, let oldest = bucketStart(now.addingTimeInterval(-Self.retention)) {
             modelCache = storedModels(database, since: oldest)
             changed = true
         }
-        if prune, let oldest = bucketStart(now.addingTimeInterval(-31 * 86400)) {
+        if prune, clockFitsHistory(database, now: now),
+            let oldest = bucketStart(now.addingTimeInterval(-Self.retention)) {
             guard
                 UsageDatabase.execute(
                     database, "DELETE FROM buckets WHERE start < ?", [.integer(oldest)])
@@ -524,23 +531,16 @@ public actor UsageStore {
         Self.series(range, now: now, calendar: calendar, database: database.handle)
     }
 
-    /// Fetch all chart ranges from one committed 30-day bucket scan.
+    /// Fetch all chart ranges from one committed 26-week bucket scan.
     public func seriesAll(now: Date) -> [UsageRange: UsageSeries] {
         Self.seriesAll(now: now, calendar: calendar, database: database.handle)
     }
 
-    private struct SeriesRow {
-        let start: Date
-        let provider: Provider
-        let totals: UsageTotals
-    }
-
     private static func seriesRows(
         _ range: UsageRange, now: Date, calendar: Calendar, database: OpaquePointer?
-    ) -> [SeriesRow] {
-        guard let end = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)),
-            let lower = bucketStart(range.start(now: now, calendar: calendar)),
-            let upper = bucketStart(end),
+    ) -> [UsageSeries.Entry] {
+        guard let lower = bucketStart(range.start(now: now, calendar: calendar)),
+            let upper = bucketStart(range.chartEnd(now: now, calendar: calendar)),
             let query = UsageStatement(database, """
                 SELECT start, provider, SUM(CAST(requests AS REAL)), SUM(CAST(failed AS REAL)),
                     SUM(CAST(input AS REAL)), SUM(CAST(output AS REAL)), SUM(CAST(total AS REAL))
@@ -548,9 +548,9 @@ public actor UsageStore {
                 """),
             query.bind([.integer(lower), .integer(upper)])
         else { return [] }
-        var rows: [SeriesRow] = []
+        var rows: [UsageSeries.Entry] = []
         while sqlite3_step(query.handle) == SQLITE_ROW {
-            rows.append(SeriesRow(
+            rows.append(UsageSeries.Entry(
                 start: Date(timeIntervalSince1970: sqlite3_column_double(query.handle, 0)),
                 provider: Provider(raw: query.text(1)), totals: query.totals(2)))
         }
@@ -561,7 +561,7 @@ public actor UsageStore {
         now: Date, calendar: Calendar, database: OpaquePointer?
     ) -> [UsageRange: UsageSeries] {
         let trackingSince = trackingDate(database)
-        let rows = seriesRows(.month, now: now, calendar: calendar, database: database)
+        let rows = seriesRows(.halfYear, now: now, calendar: calendar, database: database)
         return Dictionary(uniqueKeysWithValues: UsageRange.allCases.map { range in
             (range, series(range, now: now, calendar: calendar, rows: rows,
                            trackingSince: trackingSince))
@@ -577,61 +577,9 @@ public actor UsageStore {
     }
 
     private static func series(
-        _ range: UsageRange, now: Date, calendar: Calendar, rows: [SeriesRow], trackingSince: Date?
+        _ range: UsageRange, now: Date, calendar: Calendar, rows: [UsageSeries.Entry], trackingSince: Date?
     ) -> UsageSeries {
-        let start = range.start(now: now, calendar: calendar)
-        let today = calendar.startOfDay(for: now)
-        guard let end = calendar.date(byAdding: .day, value: 1, to: today)
-        else {
-            return UsageSeries(range: range, granularity: range.granularity, points: [],
-                               trackingSince: trackingSince)
-        }
-        var intervals: [(start: Date, end: Date)] = []
-        var cursor = start
-        while cursor < end {
-            let boundary = range.granularity == .hour
-                ? calendar.nextDate(after: cursor, matching: DateComponents(minute: 0, second: 0),
-                                    matchingPolicy: .nextTime) ?? end
-                : calendar.date(byAdding: .day, value: 1, to: cursor) ?? end
-            let next = min(boundary, end)
-            guard next > cursor else { break }
-            intervals.append((cursor, next))
-            cursor = next
-        }
-        var bins = Array(repeating: [Provider: UsageTotals](), count: intervals.count)
-        for row in rows {
-            let bucket = row.start
-            guard bucket >= start, bucket < end else { continue }
-            // Upper bound on starts handles variable-length calendar hours and days.
-            var lower = 0
-            var upper = intervals.count
-            while lower < upper {
-                let middle = lower + (upper - lower) / 2
-                if intervals[middle].start <= bucket { lower = middle + 1 }
-                else { upper = middle }
-            }
-            let index = lower - 1
-            guard bins.indices.contains(index), bucket < intervals[index].end else { continue }
-            let provider = row.provider
-            let totals = row.totals
-            let previous = bins[index][provider] ?? .zero
-            bins[index][provider] = UsageTotals(
-                requests: addingCounts(previous.requests, totals.requests),
-                inputTokens: addingCounts(previous.inputTokens, totals.inputTokens),
-                outputTokens: addingCounts(previous.outputTokens, totals.outputTokens),
-                totalTokens: addingCounts(previous.totalTokens, totals.totalTokens))
-        }
-        let points = intervals.enumerated().map { index, interval in
-            UsageSeriesPoint(
-                start: interval.start, end: interval.end,
-                byProvider: bins[index].map { provider, totals in
-                    ProviderTokens(provider: provider, inputTokens: totals.inputTokens,
-                                   outputTokens: totals.outputTokens, totalTokens: totals.totalTokens,
-                                   requests: totals.requests)
-                }, trackingSince: trackingSince, now: now)
-        }
-        return UsageSeries(range: range, granularity: range.granularity, points: points,
-                           trackingSince: trackingSince)
+        UsageSeries.binned(range, entries: rows, now: now, calendar: calendar, trackingSince: trackingSince)
     }
 
     private static func report(
@@ -740,6 +688,18 @@ public actor UsageStore {
         else { return nil }
         let seconds = sqlite3_column_double(query.handle, 0)
         return seconds.isFinite ? Date(timeIntervalSince1970: seconds) : nil
+    }
+
+    /// False when `now` is more than `pruneClockTolerance` past the newest bucket. Runs before
+    /// this ingest's rows are written, so records stamped by a wrong clock don't vouch for it on
+    /// their first prune. After a long break the prune waits until new usage is recorded.
+    private static func clockFitsHistory(_ database: OpaquePointer?, now: Date) -> Bool {
+        guard let query = UsageStatement(database, "SELECT MAX(start) FROM buckets"),
+            sqlite3_step(query.handle) == SQLITE_ROW,
+            sqlite3_column_type(query.handle, 0) != SQLITE_NULL
+        else { return true } // nothing stored, nothing to delete
+        let newest = sqlite3_column_double(query.handle, 0)
+        return now.timeIntervalSince1970 - newest <= pruneClockTolerance
     }
 
     private static func currentDataVersion(_ database: OpaquePointer?) -> Int {

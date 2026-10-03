@@ -12,7 +12,13 @@ struct TokenChart: View {
 
     @State private var pointer: Date?
 
-    private var unit: Calendar.Component { series.granularity == .hour ? .hour : .day }
+    private var unit: Calendar.Component {
+        switch series.granularity {
+        case .hour: .hour
+        case .day: .day
+        case .week: .weekOfYear
+        }
+    }
 
     var body: some View {
         let now = Date()
@@ -28,7 +34,7 @@ struct TokenChart: View {
             if series.range == .week { weekdayRow }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(series.granularity == .hour ? "Hourly tokens today" : "Daily tokens, \(series.range.title)")
+        .accessibilityLabel(series.granularity == .hour ? "Hourly tokens today" : "\(granularityName) tokens, \(series.range.title)")
         .accessibilityValue(spokenSummary(now: now))
     }
 
@@ -79,7 +85,7 @@ struct TokenChart: View {
             let ticks = ChartLayout.axisTicks(series, calendar: .autoupdatingCurrent)
             AxisMarks(values: ticks) { value in
                 // The last tick sits near the right edge: hang its label leftwards.
-                AxisValueLabel(anchor: value.as(Date.self) == ticks.last && series.range == .month ? .topTrailing : nil) {
+                AxisValueLabel(anchor: value.as(Date.self) == ticks.last && [.month, .halfYear].contains(series.range) ? .topTrailing : nil) {
                     if let date = value.as(Date.self) {
                         Text(tickLabel(date)).font(.system(size: 8, weight: .semibold)).foregroundStyle(Theme.tertiary)
                     }
@@ -117,7 +123,7 @@ struct TokenChart: View {
                     + Text(focus.recorded ? Format.tokens(focus.totalTokens) : "not recorded")
                     .foregroundStyle(.white.opacity(0.85))
             } else {
-                Text(series.granularity == .hour ? "Hourly tokens" : "Daily tokens")
+                Text("\(granularityName) tokens")
             }
         }
         .font(.system(size: 9, weight: .semibold).monospacedDigit())
@@ -125,10 +131,20 @@ struct TokenChart: View {
         .lineLimit(1)
     }
 
+    private var granularityName: String {
+        switch series.granularity {
+        case .hour: "Hourly"
+        case .day: "Daily"
+        case .week: "Weekly"
+        }
+    }
+
     private func periodName(_ point: UsageSeriesPoint) -> String {
-        series.granularity == .hour
-            ? "\(clock(point.start))–\(clock(point.end))"
-            : point.start.formatted(.dateTime.weekday(.abbreviated).day())
+        switch series.granularity {
+        case .hour: "\(clock(point.start))–\(clock(point.end))"
+        case .day: point.start.formatted(.dateTime.weekday(.abbreviated).day())
+        case .week: "Week of " + point.start.formatted(.dateTime.month(.abbreviated).day())
+        }
     }
 
     /// 24-hour clock regardless of locale, so "06" and "18" can't be confused.
@@ -141,7 +157,7 @@ struct TokenChart: View {
     private func tickLabel(_ date: Date) -> String {
         switch series.range {
         case .today: String(clock(date).prefix(2))
-        case .week, .month: date.formatted(.dateTime.month(.defaultDigits).day())
+        case .week, .month, .halfYear: date.formatted(.dateTime.month(.defaultDigits).day())
         }
     }
 
@@ -152,7 +168,11 @@ struct TokenChart: View {
         }
         let busy = recorded.filter { $0.totalTokens > 0 }.count
         let legend = ChartLayout.legend(series, now: now, limit: .max)
-        let unitName = series.granularity == .hour ? "hours" : "days"
+        let unitName = switch series.granularity {
+        case .hour: "hours"
+        case .day: "days"
+        case .week: "weeks"
+        }
         return "Busiest \(periodName(top)) with \(Format.tokens(top.totalTokens)) tokens. "
             + "\(busy) of \(recorded.count) recorded \(unitName) used tokens, across \(legend.shown.count) providers."
     }

@@ -7,9 +7,12 @@ import SwiftUI
 /// design review; needs no Screen Recording permission.
 @MainActor
 enum Snapshots {
-    static func render(to directory: URL) throws {
+    static func render(to directory: URL) async throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let model = IslandModel.demo()
+        let jev = JevUsageMonitor.demo()
+        let noJev = JevUsageMonitor(directory: nil)
+        await noJev.reload()
         let notch = CGSize(width: 220, height: 38)
 
         // First run: no key stored, nothing recorded (an in-memory, keyless model).
@@ -18,24 +21,33 @@ enum Snapshots {
         defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
         let keyless = IslandModel(keyStore: InMemoryKeyStore(), defaults: keylessDefaults,
                                   store: UsageStore(url: nil))
-        let states: [(String, IslandModel, IslandPresentation, CGFloat, UsageRange)] = [
-            ("idle", model, .collapsed, 0, .today),
-            ("idle-hover", model, .emphasized, 0, .today),
-            ("open-top", model, .expanded(byHover: false), 0, .today),
-            ("usage-today", model, .expanded(byHover: false), 236, .today),
-            ("usage-7d", model, .expanded(byHover: false), 236, .week),
-            ("usage-30d", model, .expanded(byHover: false), 236, .month),
-            ("open-no-key", keyless, .expanded(byHover: false), 0, .today),
+        let open = IslandPresentation.expanded(byHover: false)
+        let states: [(String, IslandModel, JevUsageMonitor, IslandPresentation, DashboardPage, CGFloat, UsageRange)] = [
+            ("idle", model, jev, .collapsed, .usage, 0, .today),
+            ("idle-hover", model, jev, .emphasized, .usage, 0, .today),
+            ("open-top", model, jev, open, .usage, 0, .today),
+            ("usage-today", model, jev, open, .usage, 236, .today),
+            ("usage-7d", model, jev, open, .usage, 236, .week),
+            ("usage-30d", model, jev, open, .usage, 236, .month),
+            ("usage-6m", model, jev, open, .usage, 236, .halfYear),
+            ("open-no-key", keyless, jev, open, .usage, 0, .today),
+            ("jev-today", model, jev, open, .jev, 0, .today),
+            ("jev-7d", model, jev, open, .jev, 0, .week),
+            ("jev-30d", model, jev, open, .jev, 0, .month),
+            ("jev-6m", model, jev, open, .jev, 0, .halfYear),
+            ("jev-no-log", model, noJev, open, .jev, 0, .today),
         ]
-        for (name, model, presentation, offset, range) in states {
+        for (name, model, jev, presentation, page, offset, range) in states {
             let ui = IslandUIState()
             ui.notchSize = notch
             ui.presentation = presentation
-            ui.usageRange = range
+            ui.selection.page = page
+            ui.selection.usageRange = range
+            ui.selection.jevRange = range
             ui.isSnapshot = true
             ui.snapshotOffset = offset
             let expanded = ui.isExpanded
-            let view = IslandView(model: model, ui: ui, onTap: {}, openSettings: {}, quit: {})
+            let view = IslandView(model: model, jev: jev, ui: ui, onTap: {}, openSettings: {}, quit: {})
                 .frame(width: IslandMetrics.panelSize.width, height: expanded ? ui.panelHeight : 60)
                 .background(Color(white: 0.82)) // stand-in for a light desktop
             try write(view, to: directory.appendingPathComponent(name + ".png"))
@@ -49,7 +61,7 @@ enum Snapshots {
                           to: directory.appendingPathComponent(name + ".png"))
             }
         }
-        try write(PopoverDashboard(model: model, snapshotOffset: 0, openSettings: {}, range: .today),
+        try write(PopoverDashboard(model: model, jev: jev, selection: DashboardSelection(), snapshotOffset: 0, openSettings: {}),
                   to: directory.appendingPathComponent("menubar-popover.png"))
     }
 

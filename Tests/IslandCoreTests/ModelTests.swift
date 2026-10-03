@@ -125,7 +125,7 @@ final class VolatileDefaults: UserDefaults, @unchecked Sendable {
   model.start()
   await waitUntil { model.lastUpdated != nil }
   #expect(!model.usageAvailable)
-  #expect(model.usageReports.count == 3)
+  #expect(model.usageReports.count == UsageRange.allCases.count)
   #expect(model.usageReports.values.allSatisfy { $0.trackingSince == nil })
   model.refreshNow()
   await waitUntil { model.usageAvailable }

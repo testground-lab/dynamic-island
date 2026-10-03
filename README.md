@@ -22,7 +22,7 @@ Inside, Limits and Usage share one page; scroll to see more. "Open on hover" is 
 - `GET /v0/management/auth-files`: accounts, status, cooldowns, rate-limit headers.
 - `POST /v0/management/api-call`: optional live quota from the Claude/Codex usage endpoints (every 5 min).
 - `GET /v0/management/usage-queue`: per-request records, drained every 15 s and aggregated into
-  `~/Library/Application Support/DynamicIsland/usage.sqlite` (15-minute buckets per account and model, kept 31 days;
+  `~/Library/Application Support/DynamicIsland/usage.sqlite` (15-minute buckets per account and model, kept 183 days, see context/decisions/0013;
   no API keys, IPs or user agents are stored).
 
 **The usage queue is a destructive read.** The proxy keeps each record about 60 seconds and gives it to the first

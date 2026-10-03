@@ -219,7 +219,7 @@ func offsetSeriesPlacesLocalMidnightInFirstPoint(_ zone: String) async {
     try? await Task.sleep(for: .milliseconds(1))
   }
   #expect(model.lastUpdated != nil)
-  #expect(model.usageSeries.count == 3)
+  #expect(model.usageSeries.count == UsageRange.allCases.count)
   for range in UsageRange.allCases {
     #expect(
       model.usageSeries[range]?.points.reduce(0) { $0 + $1.totalTokens }
@@ -231,7 +231,7 @@ func offsetSeriesPlacesLocalMidnightInFirstPoint(_ zone: String) async {
 
 @MainActor @Test func demoPopulatesNonemptyUsageSeries() {
   let model = IslandModel.demo()
-  #expect(model.usageSeries.count == 3)
+  #expect(model.usageSeries.count == UsageRange.allCases.count)
   #expect(model.usageSeries.values.allSatisfy { !$0.points.isEmpty && $0.peakTokens > 0 })
 }
 
@@ -340,7 +340,7 @@ func seriesAllMatchesSeparateRanges(_ zone: String) async {
   }
   await store.ingest(records)
   let all = await store.seriesAll(now: now)
-  #expect(all.count == 3)
+  #expect(all.count == UsageRange.allCases.count)
   for range in UsageRange.allCases {
     #expect(all[range] == (await store.series(range, now: now)))
   }
@@ -387,4 +387,54 @@ private final class SeriesClock: @unchecked Sendable {
   #expect(model.lastUpdated == clock.now())
   #expect(model.usageSeries[.today]?.points[13].future == false)
   #expect(model.usageSeries[.today]?.points[14].future == true)
+}
+
+@Test(arguments: [1, 2])
+func halfYearSeriesCoversTwentySixWholeCalendarWeeks(_ firstWeekday: Int) async throws {
+  var calendar = seriesCalendar("America/New_York")
+  calendar.firstWeekday = firstWeekday
+  let store = UsageStore(url: nil, calendar: calendar, now: { seriesNow })
+  let series = await store.series(.halfYear, now: seriesNow)
+  let week = try #require(calendar.dateInterval(of: .weekOfYear, for: seriesNow))
+  #expect(series.granularity == .week)
+  #expect(series.points.count == 26)
+  #expect(series.points.first?.start == calendar.date(byAdding: .weekOfYear, value: -25, to: week.start))
+  #expect(calendar.component(.weekday, from: series.points[0].start) == firstWeekday)
+  #expect(series.points.last?.start == week.start)
+  #expect(series.points.last?.end == week.end)
+  #expect(UsageRange.halfYear.chartEnd(now: seriesNow, calendar: calendar) == week.end)
+  for (index, point) in series.points.enumerated() {
+    #expect(point.end == calendar.date(byAdding: .weekOfYear, value: 1, to: point.start))
+    if index > 0 { #expect(series.points[index - 1].end == point.start) }
+  }
+  #expect(ChartLayout.axisTicks(series, calendar: calendar) == [
+    series.points[0].start, series.points[13].start, series.points[25].start,
+  ])
+  #expect(ChartLayout.axisTicks(
+    UsageSeries(range: .halfYear, granularity: .week, points: []), calendar: calendar).isEmpty)
+}
+
+@Test(arguments: [("2026-03-08T16:00:00Z", 167), ("2026-11-01T17:00:00Z", 169)])
+func weeklySeriesRespectsDaylightSavingTransitions(_ timestamp: String, _ hours: Int) async throws {
+  var calendar = seriesCalendar("America/New_York")
+  calendar.firstWeekday = 2
+  let now = seriesDate(timestamp)
+  let store = UsageStore(url: nil, calendar: calendar, now: { now })
+  await store.ingest([seriesRecord(at: now)])
+  let series = await store.series(.halfYear, now: now)
+  let point = try #require(series.points.first { $0.start <= now && now < $0.end })
+  #expect(calendar.dateComponents([.day], from: point.start, to: point.end).day == 7)
+  #expect(point.end.timeIntervalSince(point.start) == Double(hours) * 3600)
+  #expect(point.totalTokens == 30)
+  #expect(point.end == calendar.date(byAdding: .weekOfYear, value: 1, to: point.start))
+}
+
+@Test func shorterRangesKeepTomorrowMidnightChartEnd() throws {
+  let calendar = seriesCalendar("America/New_York")
+  let tomorrow = try #require(calendar.date(byAdding: .day, value: 1,
+                                           to: calendar.startOfDay(for: seriesNow)))
+  for range in [UsageRange.today, .week, .month] {
+    #expect(range.chartEnd(now: seriesNow, calendar: calendar) == tomorrow)
+    #expect(range.granularity == (range == .today ? .hour : .day))
+  }
 }

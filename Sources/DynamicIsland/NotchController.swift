@@ -2,6 +2,17 @@ import AppKit
 import IslandCore
 import SwiftUI
 
+extension IslandCore.ScrollPhase {
+    /// The recogniser's view of a trackpad or wheel event's phase.
+    init(_ event: NSEvent) {
+        if !event.momentumPhase.isEmpty { self = .momentum }
+        else if event.phase.contains(.began) || event.phase.contains(.mayBegin) { self = .began }
+        else if event.phase.contains(.ended) || event.phase.contains(.cancelled) { self = .ended }
+        else if event.phase.isEmpty { self = .none }
+        else { self = .changed }
+    }
+}
+
 extension NSScreen {
     /// The camera housing's frame in screen coordinates, if this display has one.
     var notchFrame: CGRect? {
@@ -79,7 +90,7 @@ final class IslandHostingView<Content: View>: NSHostingView<Content> {
 @MainActor
 final class NotchController {
     private let panel: NotchPanel
-    private let ui = IslandUIState()
+    private let ui: IslandUIState
     private var interaction: IslandInteraction
     private var gesture = ScrollGestureRecognizer()
     private var monitors: [Any] = []
@@ -87,13 +98,15 @@ final class NotchController {
     private var timers: [IslandTimer: DispatchWorkItem] = [:]
     private let pinnedExpanded: Bool
 
-    init(model: IslandModel, screen: NSScreen, pinnedExpanded: Bool = false,
+    init(model: IslandModel, jev: JevUsageMonitor, selection: DashboardSelection, screen: NSScreen,
+         pinnedExpanded: Bool = false,
          openSettings: @escaping () -> Void, quit: @escaping () -> Void) {
         self.pinnedExpanded = pinnedExpanded
         interaction = IslandInteraction(openOnHover: UserDefaults.standard.bool(forKey: Self.openOnHoverKey))
         panel = NotchPanel(contentRect: .zero)
+        ui = IslandUIState(selection: selection)
         var tap: () -> Void = {}
-        let root = IslandView(model: model, ui: ui, onTap: { tap() },
+        let root = IslandView(model: model, jev: jev, ui: ui, onTap: { tap() },
                               openSettings: openSettings, quit: quit)
         let hosting = IslandHostingView(rootView: root)
         hosting.sizingOptions = []
@@ -215,7 +228,8 @@ final class NotchController {
             return event
         }) { monitors.append(local) }
 
-        // Escape closes; a two-finger swipe down opens, up on the header row closes.
+        // Escape closes; a two-finger swipe down opens, up on the header row
+        // closes, sideways switches pages.
         if let local = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .scrollWheel], handler: { [weak self] event in
             guard let self else { return event }
             if event.type == .keyDown {
@@ -244,12 +258,7 @@ final class NotchController {
     /// Feeds a scroll event to the gesture recogniser; true if it was used.
     private func scrolled(_ event: NSEvent) -> Bool {
         guard event.window === panel, isPointerInside else { return false }
-        let phase: IslandCore.ScrollPhase
-        if !event.momentumPhase.isEmpty { phase = .momentum }
-        else if event.phase.contains(.began) || event.phase.contains(.mayBegin) { phase = .began }
-        else if event.phase.contains(.ended) || event.phase.contains(.cancelled) { phase = .ended }
-        else if event.phase.isEmpty { phase = .none }
-        else { phase = .changed }
+        let phase = IslandCore.ScrollPhase(event)
         // Normalise so positive = fingers moving down, whatever the
         // natural-scrolling setting; wheels get a coarser step.
         let sign: Double = event.isDirectionInvertedFromDevice ? 1 : -1
@@ -257,13 +266,23 @@ final class NotchController {
         let expanded = interaction.isExpanded
         // The open page scrolls; only a stroke that starts on the header row
         // may close the island. Anywhere else the event goes to the scroll view.
+        // Sideways strokes switch pages anywhere on the open island.
         let inHeader = NSEvent.mouseLocation.y >= panel.frame.maxY - ui.notchSize.height
         let action = gesture.feed(pull: Double(event.scrollingDeltaY) * sign * scale,
                                   sideways: Double(event.scrollingDeltaX) * sign * scale,
-                                  time: event.timestamp, phase: phase,
+                                  time: event.timestamp, phase: phase, precise: event.hasPreciseScrollingDeltas,
                                   expanded: expanded, verticalAllowed: !expanded || inHeader)
         guard let action else { return !expanded } // nothing else scrolls on the closed island
-        send { $0.gesture(action) }
+        switch action {
+        case .nextPage, .previousPage:
+            let selection = ui.selection
+            let target = selection.page.applying(action)
+            guard target != selection.page else { return true }
+            withAnimation(Theme.page) { selection.page = target }
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        case .open, .close:
+            send { $0.gesture(action) }
+        }
         return true
     }
 

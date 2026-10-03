@@ -8,12 +8,16 @@ enum DashboardMetrics {
     static let cardRadius: CGFloat = 14
 }
 
-/// The open island's content: a header row beside the camera, then one
-/// scrolling page: Limits first, Usage below. Shared by the notch island and
-/// the menu-bar popover.
+/// The open island's content: a header row beside the camera, then one of two
+/// pages, switched by a sideways swipe or the header's dots. Page one scrolls
+/// through Limits then Usage; page two is Jev usage. Shared by the notch
+/// island and the menu-bar popover.
 struct DashboardView: View {
     let model: IslandModel
+    let jev: JevUsageMonitor
+    @Binding var page: DashboardPage
     @Binding var range: UsageRange
+    @Binding var jevRange: UsageRange
     /// Header height; in the island this is the camera's height so the header
     /// sits in the menu-bar band beside it.
     var headerHeight: CGFloat = 28
@@ -26,13 +30,12 @@ struct DashboardView: View {
     var snapshotOffset: CGFloat?
     var openSettings: () -> Void
 
-    @State private var moreBelow = false
-    @State private var moreAbove = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: DashboardMetrics.spacing) {
             header.frame(height: headerHeight)
-            page
+            pages
         }
         .frame(width: DashboardMetrics.contentWidth)
         .foregroundStyle(.white)
@@ -61,17 +64,28 @@ struct DashboardView: View {
     private var header: some View {
         let side = (DashboardMetrics.contentWidth - cameraGap) / 2
         return HStack(spacing: 0) {
-            Text("AI usage")
-                .font(.system(size: 13, weight: .semibold))
-                .accessibilityAddTraits(.isHeader)
-                .frame(width: side, alignment: .leading)
+            HStack(spacing: 6) {
+                Text(page.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                    .contentTransition(.opacity)
+                    .accessibilityAddTraits(.isHeader)
+                PageDots(page: $page)
+                Spacer(minLength: 0)
+            }
+            .frame(width: side, alignment: .leading)
             Color.clear.frame(width: cameraGap)
             HStack(spacing: 4) {
                 Spacer(minLength: 0)
-                ConnectionDot(state: model.connection)
-                    .padding(.trailing, 3)
-                    .help("Updated \(Format.ago(model.lastUpdated))")
-                IconButton(symbol: "arrow.clockwise", help: "Refresh now") { model.refreshNow() }
+                if page == .usage {
+                    ConnectionDot(state: model.connection)
+                        .padding(.trailing, 3)
+                        .help("Updated \(Format.ago(model.lastUpdated))")
+                }
+                IconButton(symbol: "arrow.clockwise", help: "Refresh now") {
+                    model.refreshNow()
+                    jev.refresh()
+                }
                 IconButton(symbol: "gearshape.fill", help: "Settings", action: openSettings)
             }
             .frame(width: side, alignment: .trailing)
@@ -80,37 +94,31 @@ struct DashboardView: View {
 
     // MARK: Page
 
-    @ViewBuilder private var page: some View {
-        TimelineView(.periodic(from: .now, by: 15)) { context in
-            let content = pageContent(now: context.date)
-            if let snapshotOffset {
-                // No fade here: the snapshot can't tell whether more is below.
-                content
-                    .fixedSize(horizontal: false, vertical: true)
-                    .offset(y: -snapshotOffset)
-                    .frame(height: pageHeight, alignment: .top)
-                    .clipped()
-            } else {
-                // One fixed height whatever the content: short pages just don't scroll.
-                ScrollView(.vertical) { content }
-                    .frame(height: pageHeight)
-                    .scrollIndicators(.automatic)
-                    .scrollBounceBehavior(.basedOnSize)
-                    .onScrollGeometryChange(for: EdgeState.self) { geo in
-                        EdgeState(above: geo.contentOffset.y > 2,
-                                  below: geo.contentOffset.y + geo.containerSize.height < geo.contentSize.height - 2)
-                    } action: { _, edges in
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            moreAbove = edges.above
-                            moreBelow = edges.below
-                        }
-                    }
-                    .mask(EdgeFade(top: moreAbove, bottom: moreBelow))
+    /// Only the current page is in the hierarchy. Each page enters from and
+    /// leaves to its own side (AI usage left, Jev right), so both pages slide
+    /// the same way whichever direction you switch.
+    @ViewBuilder private var pages: some View {
+        ZStack(alignment: .top) {
+            switch page {
+            case .usage:
+                ScrollingPage(height: pageHeight, snapshotOffset: snapshotOffset) { usageContent(now: $0) }
+                    .transition(pageTransition(from: .leading))
+            case .jev:
+                ScrollingPage(height: pageHeight, snapshotOffset: snapshotOffset) { _ in
+                    JevPage(jev: jev, range: $jevRange)
+                }
+                .transition(pageTransition(from: .trailing))
             }
         }
+        .frame(height: pageHeight, alignment: .top)
+        .clipped()
     }
 
-    @ViewBuilder private func pageContent(now: Date) -> some View {
+    private func pageTransition(from edge: Edge) -> AnyTransition {
+        reduceMotion ? .opacity : .move(edge: edge)
+    }
+
+    @ViewBuilder private func usageContent(now: Date) -> some View {
         // Both sections always render; a connection problem adds a card on top
         // and each section explains its own empty state.
         VStack(spacing: DashboardMetrics.spacing) {
@@ -139,12 +147,81 @@ struct DashboardView: View {
     }
 }
 
-// MARK: - Header pieces
+// MARK: - Pages
+
+/// A page of fixed height whatever its content: short pages just don't
+/// scroll; long ones fade at the edge where more is out of view.
+private struct ScrollingPage<Content: View>: View {
+    var height: CGFloat
+    /// Offscreen snapshots can't render scroll views; they get the page
+    /// clipped to `height`, shifted up by this offset instead.
+    var snapshotOffset: CGFloat?
+    @ViewBuilder var content: (Date) -> Content
+
+    @State private var moreBelow = false
+    @State private var moreAbove = false
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 15)) { context in
+            let content = content(context.date)
+            if let snapshotOffset {
+                // No fade here: the snapshot can't tell whether more is below.
+                content
+                    .fixedSize(horizontal: false, vertical: true)
+                    .offset(y: -snapshotOffset)
+                    .frame(height: height, alignment: .top)
+                    .clipped()
+            } else {
+                ScrollView(.vertical) { content }
+                    .frame(height: height)
+                    .scrollIndicators(.automatic)
+                    .scrollBounceBehavior(.basedOnSize)
+                    .onScrollGeometryChange(for: EdgeState.self) { geo in
+                        EdgeState(above: geo.contentOffset.y > 2,
+                                  below: geo.contentOffset.y + geo.containerSize.height < geo.contentSize.height - 2)
+                    } action: { _, edges in
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            moreAbove = edges.above
+                            moreBelow = edges.below
+                        }
+                    }
+                    .mask(EdgeFade(top: moreAbove, bottom: moreBelow))
+            }
+        }
+    }
+}
 
 private struct EdgeState: Equatable {
     var above: Bool
     var below: Bool
 }
+
+/// One dot per page beside the title; the current one is a short bar.
+private struct PageDots: View {
+    @Binding var page: DashboardPage
+
+    var body: some View {
+        HStack(spacing: -4) {
+            ForEach(DashboardPage.allCases, id: \.self) { item in
+                Button {
+                    withAnimation(Theme.page) { page = item }
+                } label: {
+                    Capsule()
+                        .fill(.white.opacity(item == page ? 0.85 : 0.28))
+                        .frame(width: item == page ? 10 : 4, height: 4)
+                        .frame(minWidth: 14, minHeight: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(item.title) page")
+                .accessibilityAddTraits(item == page ? .isSelected : [])
+            }
+        }
+        .help("Swipe sideways with two fingers, or click a dot, to switch pages")
+    }
+}
+
+// MARK: - Header pieces
 
 /// Fades the page's edges where more content is scrolled out of view.
 private struct EdgeFade: View {
@@ -163,7 +240,7 @@ private struct EdgeFade: View {
 }
 
 
-private struct SectionHeader<Trailing: View>: View {
+struct SectionHeader<Trailing: View>: View {
     var title: String
     @ViewBuilder var trailing: Trailing
 
@@ -205,7 +282,7 @@ private struct IconButton: View {
 
 // MARK: - Cards
 
-private struct CardChrome<Content: View>: View {
+struct CardChrome<Content: View>: View {
     /// Stretch to the row's height (cards side by side share one height).
     var fill = false
     @ViewBuilder var content: Content
@@ -403,7 +480,7 @@ private struct UsagePage: View {
 }
 
 /// Today / 7d / 30d.
-private struct RangePicker: View {
+struct RangePicker: View {
     @Binding var range: UsageRange
 
     var body: some View {
@@ -499,7 +576,7 @@ private struct BreakdownCard: View {
 
 // MARK: - States
 
-private struct EmptyNote: View {
+struct EmptyNote: View {
     var symbol: String
     var text: String
 
@@ -579,12 +656,13 @@ private struct PillButton: View {
     }
 }
 
-private extension UsageRange {
+extension UsageRange {
     var spokenTitle: String {
         switch self {
         case .today: "Today"
         case .week: "Last 7 days"
         case .month: "Last 30 days"
+        case .halfYear: "Last 6 months"
         }
     }
 }

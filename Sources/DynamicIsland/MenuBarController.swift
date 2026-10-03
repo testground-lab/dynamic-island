@@ -7,14 +7,19 @@ import SwiftUI
 @MainActor
 final class MenuBarController: NSObject {
     private let model: IslandModel
+    private let selection: DashboardSelection
+    private var gesture = ScrollGestureRecognizer()
+    private var scrollMonitor: Any?
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
     private let openSettings: () -> Void
     private let quit: () -> Void
     private var alive = true
 
-    init(model: IslandModel, openSettings: @escaping () -> Void, quit: @escaping () -> Void) {
+    init(model: IslandModel, jev: JevUsageMonitor, selection: DashboardSelection,
+         openSettings: @escaping () -> Void, quit: @escaping () -> Void) {
         self.model = model
+        self.selection = selection
         self.openSettings = openSettings
         self.quit = quit
         super.init()
@@ -22,7 +27,7 @@ final class MenuBarController: NSObject {
         popover.behavior = .transient
         popover.appearance = NSAppearance(named: .darkAqua)
         popover.contentViewController = NSHostingController(rootView:
-            PopoverDashboard(model: model, openSettings: { [weak self] in
+            PopoverDashboard(model: model, jev: jev, selection: selection, openSettings: { [weak self] in
                 self?.popover.performClose(nil)
                 openSettings()
             })
@@ -34,10 +39,32 @@ final class MenuBarController: NSObject {
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
         render()
+        installSwipeMonitor()
+    }
+
+    /// Sideways two-finger swipes in the popover switch pages, as on the island.
+    private func installSwipeMonitor() {
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self, self.popover.isShown, event.window === self.popover.contentViewController?.view.window
+            else { return event }
+            let phase = IslandCore.ScrollPhase(event)
+            let sign: Double = event.isDirectionInvertedFromDevice ? 1 : -1
+            let action = self.gesture.feed(pull: Double(event.scrollingDeltaY) * sign,
+                                           sideways: Double(event.scrollingDeltaX) * sign,
+                                           time: event.timestamp, phase: phase,
+                                           precise: event.hasPreciseScrollingDeltas,
+                                           expanded: true, verticalAllowed: false)
+            guard let action, action == .nextPage || action == .previousPage else { return event }
+            let target = self.selection.page.applying(action)
+            if target != self.selection.page { withAnimation(Theme.page) { self.selection.page = target } }
+            return nil
+        }
     }
 
     func tearDown() {
         alive = false
+        if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) }
+        scrollMonitor = nil
         popover.performClose(nil)
         NSStatusBar.system.removeStatusItem(item)
     }
@@ -100,15 +127,17 @@ final class MenuBarController: NSObject {
 /// The dashboard in the popover: no camera, so the header is one row.
 struct PopoverDashboard: View {
     let model: IslandModel
+    let jev: JevUsageMonitor
+    @Bindable var selection: DashboardSelection
     var snapshotOffset: CGFloat?
     var openSettings: () -> Void
-    @State var range: UsageRange = .today
 
     static let headerHeight: CGFloat = 22
     static let padding: CGFloat = 12
 
     var body: some View {
-        DashboardView(model: model, range: $range, headerHeight: Self.headerHeight,
+        DashboardView(model: model, jev: jev, page: $selection.page, range: $selection.usageRange, jevRange: $selection.jevRange,
+                      headerHeight: Self.headerHeight,
                       pageHeight: PageSizing.viewport(total: Theme.openHeight, header: Self.headerHeight,
                                                       spacing: DashboardMetrics.spacing, chrome: 2 * Self.padding),
                       snapshotOffset: snapshotOffset, openSettings: openSettings)

@@ -140,27 +140,47 @@ public struct ModelUsage: Identifiable, Hashable, Sendable {
 }
 
 public enum UsageRange: String, CaseIterable, Hashable, Sendable {
-    case today, week, month
+    case today, week, month, halfYear
 
     public var title: String {
         switch self {
         case .today: "Today"
         case .week: "7d"
         case .month: "30d"
+        case .halfYear: "6m"
         }
     }
 
-    public var granularity: UsageGranularity { self == .today ? .hour : .day }
+    public var granularity: UsageGranularity {
+        switch self {
+        case .today: .hour
+        case .week, .month: .day
+        case .halfYear: .week
+        }
+    }
 
     public func start(now: Date, calendar: Calendar) -> Date {
         let today = calendar.startOfDay(for: now)
+        if self == .halfYear {
+            let week = calendar.dateInterval(of: .weekOfYear, for: today)?.start ?? today
+            let earlier = calendar.date(byAdding: .weekOfYear, value: -25, to: week) ?? week
+            return calendar.dateInterval(of: .weekOfYear, for: earlier)?.start ?? earlier
+        }
         let days = self == .today ? 0 : self == .week ? -6 : -29
         return calendar.date(byAdding: .day, value: days, to: today) ?? today
+    }
+
+    public func chartEnd(now: Date, calendar: Calendar) -> Date {
+        let today = calendar.startOfDay(for: now)
+        if self == .halfYear {
+            return calendar.dateInterval(of: .weekOfYear, for: today)?.end ?? today
+        }
+        return calendar.date(byAdding: .day, value: 1, to: today) ?? today
     }
 }
 
 public enum UsageGranularity: Hashable, Sendable {
-    case hour, day
+    case hour, day, week
 }
 
 public struct ProviderTokens: Hashable, Sendable {

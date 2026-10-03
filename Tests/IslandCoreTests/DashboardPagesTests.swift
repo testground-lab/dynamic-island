@@ -7,7 +7,7 @@ import Testing
     let pages = DashboardPages(defaults: VolatileDefaults())
     #expect(pages.shown == [.usage, .jev])
     #expect(pages.current == .usage)
-    #expect(pages.canDisable(.usage) && pages.canDisable(.jev))
+    #expect(!pages.isLocked(.usage) && !pages.isLocked(.jev))
 }
 
 @Test func shownPagesPersist() {
@@ -35,17 +35,25 @@ import Testing
     #expect(DashboardPages(enabled: []).shown == [.usage, .jev])
 }
 
+@Test func nonBoolSavedValueHidesOnlyThatPage() {
+    let defaults = VolatileDefaults()
+    defaults.set("garbage", forKey: "showJevPage")
+    #expect(DashboardPages(defaults: defaults).shown == [.usage])
+    defaults.set(["x"], forKey: "showUsagePage")
+    #expect(DashboardPages(defaults: defaults).shown == [.usage, .jev]) // never zero pages
+}
+
 @Test func theLastShownPageCantBeHidden() {
     var pages = DashboardPages()
     pages.setEnabled(.jev, false)
-    #expect(!pages.canDisable(.usage))
-    #expect(pages.canDisable(.jev)) // hidden: turning it on is always allowed
+    #expect(pages.isLocked(.usage))
+    #expect(!pages.isLocked(.jev)) // hidden: turning it on is always allowed
     pages.setEnabled(.usage, false)
     #expect(pages.shown == [.usage])
     #expect(pages.current == .usage)
     pages.setEnabled(.jev, true)
     #expect(pages.shown == [.usage, .jev])
-    #expect(pages.canDisable(.usage))
+    #expect(!pages.isLocked(.usage))
 }
 
 @Test(arguments: DashboardPage.allCases)

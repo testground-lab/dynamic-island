@@ -78,7 +78,9 @@ struct DashboardView: View {
             Color.clear.frame(width: cameraGap)
             HStack(spacing: 4) {
                 Spacer(minLength: 0)
-                if page == .usage {
+                // On the Jev page only a problem shows, so a hidden AI usage
+                // page can't hide a connection that stopped collecting.
+                if page == .usage || model.connection.problem != nil {
                     ConnectionDot(state: model.connection)
                         .padding(.trailing, 3)
                         .help("Updated \(Format.ago(model.lastUpdated))")
@@ -199,31 +201,41 @@ private struct EdgeState: Equatable {
 }
 
 /// One dot per shown page beside the title; the current one is a short bar.
-/// A single shown page keeps its dot so the header doesn't shift.
+/// A single shown page keeps its dot (not a button then) so the header
+/// doesn't shift.
 private struct PageDots: View {
     let selection: DashboardSelection
 
     var body: some View {
-        let page = selection.pages.current
-        HStack(spacing: -4) {
-            ForEach(selection.pages.shown, id: \.self) { item in
-                Button {
-                    selection.show(item)
-                } label: {
-                    Capsule()
-                        .fill(.white.opacity(item == page ? 0.85 : 0.28))
-                        .frame(width: item == page ? 10 : 4, height: 4)
-                        .frame(minWidth: 14, minHeight: 20)
-                        .contentShape(Rectangle())
+        let pages = selection.pages
+        if pages.shown.count > 1 {
+            HStack(spacing: -4) {
+                ForEach(pages.shown, id: \.self) { item in
+                    Button {
+                        selection.show(item)
+                    } label: {
+                        dot(current: item == pages.current)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(item.title) page")
+                    .accessibilityAddTraits(item == pages.current ? .isSelected : [])
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(item.title) page")
-                .accessibilityAddTraits(item == page ? .isSelected : [])
             }
+            .help("Swipe sideways with two fingers, or click a dot, to switch pages")
+        } else {
+            let hidden = DashboardPage.allCases.filter { !pages.isEnabled($0) }.map(\.title)
+            dot(current: true)
+                .help("Only \(pages.current.title) is shown. Turn on \(hidden.joined(separator: ", ")) in Settings to switch pages.")
+                .accessibilityHidden(true)
         }
-        .help(selection.pages.shown.count > 1
-              ? "Swipe sideways with two fingers, or click a dot, to switch pages"
-              : "Turn the other page on in Settings")
+    }
+
+    private func dot(current: Bool) -> some View {
+        Capsule()
+            .fill(.white.opacity(current ? 0.85 : 0.28))
+            .frame(width: current ? 10 : 4, height: 4)
+            .frame(minWidth: 14, minHeight: 20)
+            .contentShape(Rectangle())
     }
 }
 

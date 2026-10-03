@@ -18,14 +18,14 @@ public struct DashboardPages: Equatable, Sendable {
 
     public func isEnabled(_ page: DashboardPage) -> Bool { enabled.contains(page) }
 
-    /// The last shown page can't be hidden.
-    public func canDisable(_ page: DashboardPage) -> Bool { !isEnabled(page) || enabled.count > 1 }
+    /// The last shown page is locked: it can't be hidden.
+    public func isLocked(_ page: DashboardPage) -> Bool { isEnabled(page) && enabled.count == 1 }
 
     /// Shows or hides a page; hiding the open page opens the remaining one.
     public mutating func setEnabled(_ page: DashboardPage, _ isOn: Bool) {
         if isOn {
             enabled.insert(page)
-        } else if canDisable(page) {
+        } else if !isLocked(page) {
             enabled.remove(page)
             show(current)
         }

@@ -62,9 +62,9 @@ struct SettingsView: View {
                 ForEach(DashboardPage.allCases, id: \.self) { page in
                     Toggle(page.title, isOn: Binding(get: { selection.pages.isEnabled(page) },
                                                      set: { selection.setEnabled(page, $0) }))
-                        .disabled(!selection.pages.canDisable(page))
+                        .disabled(selection.pages.isLocked(page))
                 }
-                Text("Hidden pages keep recording, so turning one back on shows no gap. One page always stays on.")
+                Text("Hidden pages keep collecting data in the background. One page always stays on.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

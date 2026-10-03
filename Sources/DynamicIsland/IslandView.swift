@@ -3,12 +3,39 @@ import SwiftUI
 
 /// Page and range choices of the dashboard. One instance lives as long as the
 /// app and is shared by the island and the menu-bar popover, so a display
-/// change that swaps one for the other keeps them.
+/// change that swaps one for the other keeps them. Only the shown pages
+/// (Settings) outlive the app.
 @MainActor @Observable
 final class DashboardSelection {
-    var page: DashboardPage = .usage
+    private(set) var pages: DashboardPages
     var usageRange: UsageRange = .today
     var jevRange: UsageRange = .today
+    @ObservationIgnored private let defaults: UserDefaults?
+
+    /// `defaults` keeps the shown pages; nil keeps them in memory only (snapshots).
+    init(defaults: UserDefaults? = nil) {
+        self.defaults = defaults
+        pages = defaults.map(DashboardPages.init(defaults:)) ?? DashboardPages()
+    }
+
+    /// Opens `page` (dot click, --page), or the first shown page if it's hidden.
+    func show(_ page: DashboardPage) {
+        withAnimation(Theme.page) { pages.show(page) }
+    }
+
+    /// Steps to the next or previous shown page; false when there is none.
+    func apply(_ action: ScrollGestureAction) -> Bool {
+        var stepped = pages
+        guard stepped.apply(action) else { return false }
+        withAnimation(Theme.page) { pages = stepped }
+        return true
+    }
+
+    /// Settings: shows or hides a page (never the last one) and saves it.
+    func setEnabled(_ page: DashboardPage, _ isOn: Bool) {
+        withAnimation(Theme.page) { pages.setEnabled(page, isOn) }
+        if let defaults { pages.save(to: defaults) }
+    }
 }
 
 /// UI-only state shared between the notch window controller and the views.
@@ -92,10 +119,8 @@ struct IslandView: View {
     }
 
     private var expandedContent: some View {
-        @Bindable var selection = ui.selection
         let shoulder = NotchShape.shoulder(height: 200)
-        return DashboardView(model: model, jev: jev, page: $selection.page,
-                             range: $selection.usageRange, jevRange: $selection.jevRange,
+        return DashboardView(model: model, jev: jev, selection: ui.selection,
                              headerHeight: ui.notchSize.height,
                              cameraGap: ui.notchSize.width,
                              pageHeight: PageSizing.viewport(total: Theme.openHeight, header: ui.notchSize.height,

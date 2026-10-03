@@ -5,7 +5,7 @@ import IslandCore
 ///   --demo      render bundled fixtures, no network, no Keychain
 ///   --expanded  keep the island expanded
 ///   --menubar   force the menu-bar fallback even on a notched display
-///   --page jev  open on the Jev page
+///   --page jev  open on the Jev page (if it is shown; see Settings)
 ///   --range <today|week|month|halfYear>  start both pages on this range
 ///   --jev-dir <dir>  read Jev usage logs from this folder instead of the router's (also with --demo)
 ///   --snapshot <dir>  render demo PNGs and exit
@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let arguments = Set(CommandLine.arguments)
     private var model: IslandModel!
     private var jev: JevUsageMonitor!
-    private let selection = DashboardSelection()
+    private let selection = DashboardSelection(defaults: .standard)
     private var settings: SettingsWindowController!
     private var notch: NotchController?
     private var menuBar: MenuBarController?
@@ -55,12 +55,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 : JevUsageMonitor(directory: JevUsageMonitor.defaultDirectory)
         }
         jev.start()
-        if let page = Self.value(after: "--page").flatMap(DashboardPage.init(rawValue:)) { selection.page = page }
+        if let page = Self.value(after: "--page").flatMap(DashboardPage.init(rawValue:)) { selection.show(page) }
         if let range = Self.value(after: "--range").flatMap(UsageRange.init(rawValue:)) {
             selection.usageRange = range
             selection.jevRange = range
         }
-        settings = SettingsWindowController(model: model)
+        settings = SettingsWindowController(model: model, selection: selection)
 
         layoutForScreens()
         screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,

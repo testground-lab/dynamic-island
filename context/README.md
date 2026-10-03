@@ -25,6 +25,7 @@ Requirements and decisions for this project, one per file, so new sessions have 
 - [15-height-up-to-60-percent](requirements/15-height-up-to-60-percent.md): Open island grows up to 60% of the screen (superseded)
 - [16-swipe-pages-jev](requirements/16-swipe-pages-jev.md): Two swipe pages: AI usage, then Jev usage
 - [17-six-month-range](requirements/17-six-month-range.md): 6m range (weekly bars) on both pages
+- [18-page-toggles](requirements/18-page-toggles.md): Show or hide each page in Settings (one always stays on)
 
 ## Decisions
 - [0001-native-swiftui-lsuielement](decisions/0001-native-swiftui-lsuielement.md): Native SwiftUI app, LSUIElement

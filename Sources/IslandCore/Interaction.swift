@@ -222,15 +222,4 @@ public struct ScrollGestureRecognizer: Equatable, Sendable {
 
 public enum DashboardPage: String, CaseIterable, Hashable, Sendable {
     case usage, jev
-
-    public var next: DashboardPage { .jev }
-    public var previous: DashboardPage { .usage }
-
-    public func applying(_ action: ScrollGestureAction) -> DashboardPage {
-        switch action {
-        case .nextPage: next
-        case .previousPage: previous
-        case .open, .close: self
-        }
-    }
 }

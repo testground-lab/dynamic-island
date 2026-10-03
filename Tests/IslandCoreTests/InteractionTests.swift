@@ -375,17 +375,7 @@ func pageSwipeHorizontalCone(_ degrees: Double) {
         phase: .began, expanded: true, verticalAllowed: false) == (degrees <= 30 ? .nextPage : nil))
 }
 
-@Test func dashboardPageClampsAndIgnoresPresentationActions() {
-    #expect(DashboardPage.usage.previous == .usage)
-    #expect(DashboardPage.usage.next == .jev)
-    #expect(DashboardPage.jev.previous == .usage)
-    #expect(DashboardPage.jev.next == .jev)
-    #expect(DashboardPage.usage.applying(.nextPage) == .jev)
-    #expect(DashboardPage.jev.applying(.previousPage) == .usage)
-    for page in DashboardPage.allCases {
-        #expect(page.applying(.open) == page)
-        #expect(page.applying(.close) == page)
-    }
+@Test func pageActionsLeaveThePresentationAlone() {
     var interaction = IslandInteraction()
     #expect(interaction.gesture(.nextPage).isEmpty)
     #expect(interaction.gesture(.previousPage).isEmpty)

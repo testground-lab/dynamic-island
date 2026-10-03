@@ -41,7 +41,7 @@ enum Snapshots {
             let ui = IslandUIState()
             ui.notchSize = notch
             ui.presentation = presentation
-            ui.selection.page = page
+            ui.selection.show(page)
             ui.selection.usageRange = range
             ui.selection.jevRange = range
             ui.isSnapshot = true

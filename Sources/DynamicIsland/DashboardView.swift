@@ -15,9 +15,8 @@ enum DashboardMetrics {
 struct DashboardView: View {
     let model: IslandModel
     let jev: JevUsageMonitor
-    @Binding var page: DashboardPage
-    @Binding var range: UsageRange
-    @Binding var jevRange: UsageRange
+    /// Shown pages, the open one and each page's range.
+    @Bindable var selection: DashboardSelection
     /// Header height; in the island this is the camera's height so the header
     /// sits in the menu-bar band beside it.
     var headerHeight: CGFloat = 28
@@ -31,6 +30,8 @@ struct DashboardView: View {
     var openSettings: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var page: DashboardPage { selection.pages.current }
 
     var body: some View {
         VStack(spacing: DashboardMetrics.spacing) {
@@ -70,7 +71,7 @@ struct DashboardView: View {
                     .lineLimit(1)
                     .contentTransition(.opacity)
                     .accessibilityAddTraits(.isHeader)
-                PageDots(page: $page)
+                PageDots(selection: selection)
                 Spacer(minLength: 0)
             }
             .frame(width: side, alignment: .leading)
@@ -105,7 +106,7 @@ struct DashboardView: View {
                     .transition(pageTransition(from: .leading))
             case .jev:
                 ScrollingPage(height: pageHeight, snapshotOffset: snapshotOffset) { _ in
-                    JevPage(jev: jev, range: $jevRange)
+                    JevPage(jev: jev, range: $selection.jevRange)
                 }
                 .transition(pageTransition(from: .trailing))
             }
@@ -139,7 +140,8 @@ struct DashboardView: View {
             }
             LimitsPage(accounts: model.accounts, now: now,
                        emptyText: limitsEmptyText)
-            SectionHeader(title: "Usage") { RangePicker(range: $range) }
+            let range = selection.usageRange
+            SectionHeader(title: "Usage") { RangePicker(range: $selection.usageRange) }
                 .padding(.top, 4)
             UsagePage(report: model.usageReports[range], series: model.usageSeries[range],
                       state: model.usageState(for: range), queueIssue: queueIssue)
@@ -196,15 +198,17 @@ private struct EdgeState: Equatable {
     var below: Bool
 }
 
-/// One dot per page beside the title; the current one is a short bar.
+/// One dot per shown page beside the title; the current one is a short bar.
+/// A single shown page keeps its dot so the header doesn't shift.
 private struct PageDots: View {
-    @Binding var page: DashboardPage
+    let selection: DashboardSelection
 
     var body: some View {
+        let page = selection.pages.current
         HStack(spacing: -4) {
-            ForEach(DashboardPage.allCases, id: \.self) { item in
+            ForEach(selection.pages.shown, id: \.self) { item in
                 Button {
-                    withAnimation(Theme.page) { page = item }
+                    selection.show(item)
                 } label: {
                     Capsule()
                         .fill(.white.opacity(item == page ? 0.85 : 0.28))
@@ -217,7 +221,9 @@ private struct PageDots: View {
                 .accessibilityAddTraits(item == page ? .isSelected : [])
             }
         }
-        .help("Swipe sideways with two fingers, or click a dot, to switch pages")
+        .help(selection.pages.shown.count > 1
+              ? "Swipe sideways with two fingers, or click a dot, to switch pages"
+              : "Turn the other page on in Settings")
     }
 }
 

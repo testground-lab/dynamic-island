@@ -55,10 +55,12 @@ func failedQueueKeepsPriorUsageAvailabilityAndSummary(_ available: Bool) async {
     ])
     let defaults = VolatileDefaults()
     defaults.set(false, forKey: "liveQuotaEnabled")
+    let start = Date()
     let model = IslandModel(
         keyStore: InMemoryKeyStore(key: "fake"), defaults: defaults,
         store: UsageStore(url: nil),
-        clientFactory: { ManagementClient(baseURL: $0, key: $1, transport: stub) })
+        clientFactory: { ManagementClient(baseURL: $0, key: $1, transport: stub) },
+        now: { Fixtures.referenceNow.addingTimeInterval(Date().timeIntervalSince(start)) })
     model.start()
     await waitForState { model.lastUpdated != nil }
     let usage = model.usageReports

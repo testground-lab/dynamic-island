@@ -4,6 +4,6 @@
 
 **Source:** User request, 2026-10-02.
 
-**Status:** current
+**Status:** current; extended by [17](17-six-month-range.md) and [19](19-account-filter.md). Unattributed series remain neutral per [12](12-unattributed-is-neutral.md).
 
 **Where in code:** `Sources/DynamicIsland/TokenChart.swift`, `IslandCore/ChartLayout.swift`, `UsageStore.series`

@@ -521,32 +521,34 @@ public actor UsageStore {
         calendar.dateInterval(of: .hour, for: now)?.start ?? now
     }
 
-    public func report(_ range: UsageRange, accounts: [Account], now: Date) -> UsageReport {
+    public func report(_ range: UsageRange, accounts: [Account], now: Date, filter: UsageAccountFilter = .all) -> UsageReport {
         Self.report(
-            range, accounts: accounts, now: now, calendar: calendar, database: database.handle)
+            range, accounts: accounts, now: now, calendar: calendar, database: database.handle, filter: filter)
     }
 
     /// Like report, only committed buckets are visible; failed writes remain pending until retried.
-    public func series(_ range: UsageRange, now: Date) -> UsageSeries {
-        Self.series(range, now: now, calendar: calendar, database: database.handle)
+    public func series(_ range: UsageRange, now: Date, filter: UsageAccountFilter = .all) -> UsageSeries {
+        Self.series(range, now: now, calendar: calendar, database: database.handle, filter: filter)
     }
 
     /// Fetch all chart ranges from one committed 26-week bucket scan.
-    public func seriesAll(now: Date) -> [UsageRange: UsageSeries] {
-        Self.seriesAll(now: now, calendar: calendar, database: database.handle)
+    public func seriesAll(now: Date, filter: UsageAccountFilter = .all) -> [UsageRange: UsageSeries] {
+        Self.seriesAll(now: now, calendar: calendar, database: database.handle, filter: filter)
     }
 
     private static func seriesRows(
-        _ range: UsageRange, now: Date, calendar: Calendar, database: OpaquePointer?
+        _ range: UsageRange, now: Date, calendar: Calendar, database: OpaquePointer?,
+        filter: UsageAccountFilter = .all
     ) -> [UsageSeries.Entry] {
         guard let lower = bucketStart(range.start(now: now, calendar: calendar)),
             let upper = bucketStart(range.chartEnd(now: now, calendar: calendar)),
             let query = UsageStatement(database, """
-                SELECT start, provider, SUM(CAST(requests AS REAL)), SUM(CAST(failed AS REAL)),
+                SELECT start, CASE WHEN auth_index = '' THEN '' ELSE provider END, SUM(CAST(requests AS REAL)), SUM(CAST(failed AS REAL)),
                     SUM(CAST(input AS REAL)), SUM(CAST(output AS REAL)), SUM(CAST(total AS REAL))
-                FROM buckets WHERE start >= ? AND start < ? GROUP BY start, provider
+                FROM buckets WHERE start >= ? AND start < ?\(filter.authIndex == nil ? "" : " AND auth_index = ?")
+                GROUP BY start, CASE WHEN auth_index = '' THEN '' ELSE provider END
                 """),
-            query.bind([.integer(lower), .integer(upper)])
+            query.bind([.integer(lower), .integer(upper)] + (filter.authIndex.map { [.text($0)] } ?? []))
         else { return [] }
         var rows: [UsageSeries.Entry] = []
         while sqlite3_step(query.handle) == SQLITE_ROW {
@@ -558,10 +560,10 @@ public actor UsageStore {
     }
 
     private static func seriesAll(
-        now: Date, calendar: Calendar, database: OpaquePointer?
+        now: Date, calendar: Calendar, database: OpaquePointer?, filter: UsageAccountFilter = .all
     ) -> [UsageRange: UsageSeries] {
         let trackingSince = trackingDate(database)
-        let rows = seriesRows(.halfYear, now: now, calendar: calendar, database: database)
+        let rows = seriesRows(.halfYear, now: now, calendar: calendar, database: database, filter: filter)
         return Dictionary(uniqueKeysWithValues: UsageRange.allCases.map { range in
             (range, series(range, now: now, calendar: calendar, rows: rows,
                            trackingSince: trackingSince))
@@ -569,10 +571,11 @@ public actor UsageStore {
     }
 
     private static func series(
-        _ range: UsageRange, now: Date, calendar: Calendar, database: OpaquePointer?
+        _ range: UsageRange, now: Date, calendar: Calendar, database: OpaquePointer?,
+        filter: UsageAccountFilter = .all
     ) -> UsageSeries {
         series(range, now: now, calendar: calendar,
-               rows: seriesRows(range, now: now, calendar: calendar, database: database),
+               rows: seriesRows(range, now: now, calendar: calendar, database: database, filter: filter),
                trackingSince: trackingDate(database))
     }
 
@@ -582,22 +585,24 @@ public actor UsageStore {
         UsageSeries.binned(range, entries: rows, now: now, calendar: calendar, trackingSince: trackingSince)
     }
 
-    private static func report(
-        _ range: UsageRange, accounts: [Account], now: Date,
-        calendar: Calendar, database: OpaquePointer?
-    ) -> UsageReport {
-        let start = range.start(now: now, calendar: calendar)
-        let trackingSince = trackingDate(database)
-        guard let lower = bucketStart(start), let upper = bucketStart(now) else {
-            return UsageReport(range: range, start: start, trackingSince: trackingSince)
-        }
-        let bounds: [SQLValue] = [.integer(lower), .integer(upper)]
+    /// Unfiltered history for the account picker, using the same labels as reports.
+    public func accountUsage(_ range: UsageRange, accounts: [Account], now: Date) -> [AccountUsage] {
+        Self.accountUsage(range, accounts: accounts, now: now, calendar: calendar, database: database.handle)
+    }
+
+    private static func accountUsage(
+        _ range: UsageRange, accounts: [Account], now: Date, calendar: Calendar,
+        database: OpaquePointer?, filter: UsageAccountFilter = .all
+    ) -> [AccountUsage] {
+        guard let lower = bucketStart(range.start(now: now, calendar: calendar)),
+              let upper = bucketStart(now) else { return [] }
+        let bounds: [SQLValue] = [.integer(lower), .integer(upper)] + (filter.authIndex.map { [.text($0)] } ?? [])
         let accountQuery = UsageStatement(
             database,
             """
             SELECT auth_index, CASE WHEN auth_index = '' THEN '' ELSE MAX(provider) END, SUM(CAST(requests AS REAL)), SUM(CAST(failed AS REAL)),
                 SUM(CAST(input AS REAL)), SUM(CAST(output AS REAL)), SUM(CAST(total AS REAL))
-            FROM buckets WHERE start >= ? AND start <= ? GROUP BY auth_index
+            FROM buckets WHERE start >= ? AND start <= ?\(filter.authIndex == nil ? "" : " AND auth_index = ?") GROUP BY auth_index
             """)
         var byAccount: [AccountUsage] = []
         if let query = accountQuery, query.bind(bounds) {
@@ -626,12 +631,26 @@ public actor UsageStore {
             }
             return $0.label == $1.label ? $0.id < $1.id : $0.label < $1.label
         }
+        return byAccount
+    }
+
+    private static func report(
+        _ range: UsageRange, accounts: [Account], now: Date,
+        calendar: Calendar, database: OpaquePointer?, filter: UsageAccountFilter = .all
+    ) -> UsageReport {
+        let start = range.start(now: now, calendar: calendar)
+        let trackingSince = trackingDate(database)
+        guard let lower = bucketStart(start), let upper = bucketStart(now) else {
+            return UsageReport(range: range, start: start, trackingSince: trackingSince, filter: filter)
+        }
+        let bounds: [SQLValue] = [.integer(lower), .integer(upper)] + (filter.authIndex.map { [.text($0)] } ?? [])
+        let byAccount = accountUsage(range, accounts: accounts, now: now, calendar: calendar, database: database, filter: filter)
         let modelQuery = UsageStatement(
             database,
             """
             SELECT model, SUM(CAST(requests AS REAL)), SUM(CAST(failed AS REAL)),
                 SUM(CAST(input AS REAL)), SUM(CAST(output AS REAL)), SUM(CAST(total AS REAL))
-            FROM buckets WHERE start >= ? AND start <= ? GROUP BY model
+            FROM buckets WHERE start >= ? AND start <= ?\(filter.authIndex == nil ? "" : " AND auth_index = ?") GROUP BY model
             """)
         var byModel: [ModelUsage] = []
         if let query = modelQuery, query.bind(bounds) {
@@ -659,7 +678,7 @@ public actor UsageStore {
         }
         return UsageReport(
             range: range, start: start, totals: totals, byAccount: byAccount, byModel: byModel,
-            trackingSince: trackingSince)
+            trackingSince: trackingSince, filter: filter)
     }
 
     public func reset() {

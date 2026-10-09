@@ -6,6 +6,9 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var model: IslandModel
     let selection: DashboardSelection
+    var displayChanged: () -> Void
+    @State private var displays = NSScreen.screens.compactMap(\.displayInfo)
+    @State private var displayPreference = DisplayPreference(defaults: .standard)
     @State private var keyDraft = ""
     @State private var baseURLDraft = ""
     @State private var message: (text: String, isError: Bool)?
@@ -58,6 +61,27 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Display") {
+                Picker("Show island on", selection: $displayPreference) {
+                    Text("Automatic").tag(DisplayPreference.automatic)
+                    ForEach(displays) { display in
+                        Text(display.name + (display.isBuiltin ? " (built-in)" : ""))
+                            .tag(displayTag(display))
+                    }
+                    if case .display(let id, let name) = displayPreference,
+                       !displays.contains(where: { $0.id == id }) {
+                        Text(name + " (not connected)").tag(displayPreference)
+                    }
+                }
+                .onChange(of: displayPreference) { _, preference in
+                    preference.save(to: .standard)
+                    displayChanged()
+                }
+                Text("Automatic uses a notched display, or the menu bar if none is connected. A chosen display without a notch shows a floating pill. If disconnected, Automatic is used until it reconnects.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Pages") {
                 ForEach(DashboardPage.allCases, id: \.self) { page in
                     Toggle(page.title, isOn: Binding(get: { selection.pages.isEnabled(page) },
@@ -72,8 +96,8 @@ struct SettingsView: View {
             Section("Behavior") {
                 Toggle("Open the island on hover", isOn: $openOnHover)
                 Text(openOnHover
-                     ? "Opens after resting on the notch for a moment and closes when the pointer leaves. A click keeps it open."
-                     : "Click the notch, or swipe down on it with two fingers, to open. Click elsewhere, press Esc or swipe up on its top row to close.")
+                     ? "Opens after resting on the island for a moment and closes when the pointer leaves. A click keeps it open."
+                     : "Click the island, or swipe down on it with two fingers, to open. Click elsewhere, press Esc or swipe up on its top row to close.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Toggle("Fetch live quota from Claude / Codex every 5 min", isOn: $model.liveQuotaEnabled)
@@ -121,6 +145,15 @@ struct SettingsView: View {
         .fixedSize(horizontal: false, vertical: true)
         .onAppear { baseURLDraft = model.baseURLString }
         .onDisappear { keyDraft = "" }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
+            displays = NSScreen.screens.compactMap(\.displayInfo)
+        }
+    }
+
+    private func displayTag(_ display: DisplayInfo) -> DisplayPreference {
+        // A connected display can be renamed; UUID, not its saved name, identifies it.
+        if case .display(let id, _) = displayPreference, id == display.id { return displayPreference }
+        return .display(id: display.id, name: display.name)
     }
 
     private var statusText: String {
@@ -215,10 +248,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private let model: IslandModel
     private let selection: DashboardSelection
+    private let displayChanged: () -> Void
 
-    init(model: IslandModel, selection: DashboardSelection) {
+    init(model: IslandModel, selection: DashboardSelection, displayChanged: @escaping () -> Void) {
         self.model = model
         self.selection = selection
+        self.displayChanged = displayChanged
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -227,7 +262,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     func show() {
         if window == nil {
-            let hosting = NSHostingController(rootView: SettingsView(model: model, selection: selection))
+            let hosting = NSHostingController(rootView: SettingsView(model: model, selection: selection, displayChanged: displayChanged))
             hosting.sizingOptions = [.preferredContentSize]
             let window = NSWindow(contentViewController: hosting)
             window.title = "Dynamic Island Settings"

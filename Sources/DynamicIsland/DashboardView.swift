@@ -29,6 +29,8 @@ struct DashboardView: View {
     var snapshotOffset: CGFloat?
     var openSettings: () -> Void
 
+    @State private var showingAccounts = false
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var page: DashboardPage { selection.pages.current }
@@ -143,12 +145,80 @@ struct DashboardView: View {
             LimitsPage(accounts: model.accounts, now: now,
                        emptyText: limitsEmptyText)
             let range = selection.usageRange
-            SectionHeader(title: "Usage") { RangePicker(range: $selection.usageRange) }
+            SectionHeader(title: "Usage") {
+                HStack(spacing: 6) {
+                    Button { showingAccounts.toggle() } label: {
+                        HStack(spacing: 4) {
+                            if let provider = filterAccount(model.usageFilter)?.provider {
+                                ProviderGlyph(provider: provider)
+                            }
+                            Text(filterLabel(model.usageFilter)).lineLimit(1).truncationMode(.middle)
+                            Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
+                        }
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(Theme.secondary)
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(.white.opacity(0.08), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: 150)
+                    .help("Filter usage by account: " + filterLabel(model.usageFilter))
+                    .accessibilityLabel("Usage account: " + filterLabel(model.usageFilter))
+                    RangePicker(range: $selection.usageRange)
+                }
+            }
                 .padding(.top, 4)
+            if showingAccounts { accountChoices }
+            let report = model.usageReports[range]
             UsagePage(report: model.usageReports[range], series: model.usageSeries[range],
-                      state: model.usageState(for: range), queueIssue: queueIssue)
+                      state: model.usageState(for: range), queueIssue: queueIssue,
+                      scope: report.map { filterLabel($0.filter) },
+                      loading: report.map { $0.filter != model.usageFilter } ?? (model.usageFilter != .all))
         }
     }
+    private func filterAccount(_ filter: UsageAccountFilter) -> AccountUsage? {
+        model.usageAccounts.first { UsageAccountFilter(authIndex: $0.authIndex) == filter }
+    }
+
+    private func filterLabel(_ filter: UsageAccountFilter) -> String {
+        switch filter {
+        case .all: "All"
+        case .unattributed: "Unattributed"
+        case .account(let index): filterAccount(filter)?.label ?? "Account · " + index.suffix(4)
+        }
+    }
+
+    private var accountChoices: some View {
+        var choices: [UsageAccountFilter] = [.all]
+        choices += model.usageAccounts.map { UsageAccountFilter(authIndex: $0.authIndex) }
+        if !choices.contains(model.usageFilter) { choices.append(model.usageFilter) }
+        return CardChrome {
+            VStack(spacing: 2) {
+                ForEach(choices, id: \.self) { filter in
+                    Button {
+                        showingAccounts = false
+                        model.setUsageFilter(filter)
+                    } label: {
+                        HStack(spacing: 6) {
+                            if let provider = filterAccount(filter)?.provider { ProviderGlyph(provider: provider) }
+                            Text(filterLabel(filter)).lineLimit(1).truncationMode(.middle)
+                            Spacer(minLength: 2)
+                            if filter == model.usageFilter { Image(systemName: "checkmark") }
+                        }
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .padding(.vertical, 5)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(filterLabel(filter))
+                    .accessibilityLabel(filterLabel(filter))
+                    .accessibilityAddTraits(filter == model.usageFilter ? .isSelected : [])
+                }
+            }
+        }
+    }
+
 }
 
 // MARK: - Pages
@@ -414,12 +484,17 @@ private struct UsagePage: View {
     /// A usage-queue problem to mention above recorded data (connection
     /// problems already have their banner at the top).
     var queueIssue: String?
+    var scope: String?
+    var loading: Bool
 
     var body: some View {
         VStack(spacing: DashboardMetrics.spacing) {
             CardChrome {
                 VStack(alignment: .leading, spacing: 5) {
-                    if let report, state == .data {
+                    if loading {
+                        Label("Loading account usage…", systemImage: "hourglass")
+                            .font(.system(size: 10)).foregroundStyle(Theme.secondary)
+                    } else if let report, state == .data {
                         if let queueIssue {
                             Label(queueIssue, systemImage: "exclamationmark.triangle.fill")
                                 .font(.system(size: 9.5))
@@ -427,10 +502,10 @@ private struct UsagePage: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         totals(report)
-                        if let series { TokenChart(series: series).padding(.top, 2) }
+                        if let series { TokenChart(series: series, scope: report.filter == .all ? nil : scope).padding(.top, 2) }
                         if report.isPartial { partialNote(report) }
                     } else if let message = state.message {
-                        Label(message, systemImage: symbol)
+                        Label(state == .empty && report?.filter != .all ? "No requests from \(scope ?? "this account") in this range." : message, systemImage: symbol)
                             .font(.system(size: 10))
                             .foregroundStyle(Theme.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -442,10 +517,12 @@ private struct UsagePage: View {
                     }
                 }
             }
-            if state == .data, let report {
+            if !loading, state == .data, let report {
                 HStack(alignment: .top, spacing: DashboardMetrics.spacing) {
+                    if report.filter == .all {
                     BreakdownCard(title: "By account", symbol: "person.2.fill",
                                   rows: report.byAccount.map { BreakdownRow(id: $0.id, name: $0.label, provider: $0.provider, totals: $0.totals) })
+                    }
                     BreakdownCard(title: "By model", symbol: "cpu",
                                   rows: report.byModel.map {
                                       BreakdownRow(id: $0.model, name: $0.model, provider: nil,

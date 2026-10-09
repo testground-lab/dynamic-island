@@ -43,7 +43,10 @@ final class DashboardSelection {
 final class IslandUIState {
     let selection: DashboardSelection
     var presentation: IslandPresentation = .collapsed
-    /// Size of the hardware notch (or a stand-in on displays without one).
+    var floating = false
+    var topInset: CGFloat = 0
+    var headerHeight: CGFloat { floating ? 28 : notchSize.height }
+    /// Size of the hardware notch, or the floating idle pill.
     var notchSize = CGSize(width: 190, height: 32)
     /// Island frame in window coordinates (top-left origin), used for hit-testing.
     var islandFrame: CGRect = .zero
@@ -87,7 +90,9 @@ struct IslandView: View {
 
     var body: some View {
         let expanded = ui.isExpanded
+        let shape = IslandOutline(floating: ui.floating)
         VStack(spacing: 0) {
+            Color.clear.frame(height: ui.topInset)
             ZStack(alignment: .top) {
                 if expanded {
                     expandedContent
@@ -99,9 +104,9 @@ struct IslandView: View {
                         .accessibilityAction { onTap() }
                 }
             }
-            .background(NotchShape().fill(.black))
-            .clipShape(NotchShape())
-            .contentShape(NotchShape())
+            .background(shape.fill(.black))
+            .clipShape(shape)
+            .contentShape(shape)
             .simultaneousGesture(TapGesture().onEnded(onTap))
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { ui.islandFrame = $0 }
             .contextMenu {
@@ -121,9 +126,9 @@ struct IslandView: View {
     private var expandedContent: some View {
         let shoulder = NotchShape.shoulder(height: 200)
         return DashboardView(model: model, jev: jev, selection: ui.selection,
-                             headerHeight: ui.notchSize.height,
-                             cameraGap: ui.notchSize.width,
-                             pageHeight: PageSizing.viewport(total: Theme.openHeight, header: ui.notchSize.height,
+                             headerHeight: ui.headerHeight,
+                             cameraGap: ui.floating ? 0 : ui.notchSize.width,
+                             pageHeight: PageSizing.viewport(total: Theme.openHeight, header: ui.headerHeight,
                                                              spacing: DashboardMetrics.spacing,
                                                              chrome: IslandMetrics.bottomInset),
                              snapshotOffset: ui.isSnapshot ? (ui.snapshotOffset ?? 0) : nil,
@@ -151,5 +156,17 @@ struct IdleNotch: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityValue(problem ?? "")
             .accessibilityHint("Opens quota and usage")
+    }
+}
+
+/// Real camera shoulders stay unchanged; external displays use a rounded black pill.
+private struct IslandOutline: Shape {
+    var floating: Bool
+
+    func path(in rect: CGRect) -> Path {
+        if floating {
+            return RoundedRectangle(cornerRadius: min(rect.height / 2, 22), style: .continuous).path(in: rect)
+        }
+        return NotchShape().path(in: rect)
     }
 }

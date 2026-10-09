@@ -60,7 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             selection.usageRange = range
             selection.jevRange = range
         }
-        settings = SettingsWindowController(model: model, selection: selection)
+        settings = SettingsWindowController(model: model, selection: selection, displayChanged: { [weak self] in self?.layoutForScreens() })
 
         layoutForScreens()
         screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
@@ -75,7 +75,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func layoutForScreens() {
         let openSettings: () -> Void = { [weak self] in self?.settings.show() }
         let quit: () -> Void = { NSApp.terminate(nil) }
-        let screen = arguments.contains("--menubar") ? nil : NSScreen.notched
+        let screens = NSScreen.screens
+        let target = DisplayTarget.resolve(DisplayPreference(defaults: .standard),
+                                           displays: screens.compactMap(\.displayInfo),
+                                           forceMenuBar: arguments.contains("--menubar"))
+        let screen: NSScreen?
+        if case .island(let id, _) = target {
+            screen = screens.first { $0.displayInfo?.id == id }
+        } else {
+            screen = nil
+        }
 
         if let screen {
             menuBar?.tearDown()

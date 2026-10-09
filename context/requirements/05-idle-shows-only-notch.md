@@ -4,6 +4,6 @@
 
 **Source:** User feedback, 2026-10-02.
 
-**Status:** current (supersedes the collapsed-strip design of 2026-10-02)
+**Status:** current for hardware notches; partly superseded by [20](20-display-selector.md) for explicitly selected nonnotched displays (supersedes the collapsed-strip design of 2026-10-02)
 
 **Where in code:** `IslandView.swift` (`IdleNotch`)

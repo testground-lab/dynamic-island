@@ -7,6 +7,11 @@ private let usageLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: 
 @MainActor @Observable public final class IslandModel {
     public private(set) var accounts: [Account] = []
     public private(set) var usageReports: [UsageRange: UsageReport] = [:]
+    public private(set) var usageFilter: UsageAccountFilter = .all
+    public private(set) var usageAccounts: [AccountUsage] = []
+    @ObservationIgnored private var filterTask: Task<Void, Never>?
+    @ObservationIgnored private var reportRevision = 0
+    @ObservationIgnored private var lastReportFilter: UsageAccountFilter?
     public private(set) var usageSeries: [UsageRange: UsageSeries] = [:]
     public private(set) var connection: ConnectionState = .connecting
     public private(set) var lastUpdated: Date?
@@ -52,6 +57,7 @@ private let usageLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: 
         self.store = store
         self.usageReports = store.initialReports
         self.usageSeries = store.initialSeries
+        self.usageAccounts = store.initialReports[.halfYear]?.byAccount ?? []
         self.clientFactory = clientFactory
         self.nowProvider = now
         baseURLString = defaults.string(forKey: "baseURL") ?? BaseURLValidator.defaultBaseURL
@@ -77,6 +83,9 @@ private let usageLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: 
         }
     }
     public func stop() {
+        reportRevision += 1
+        filterTask?.cancel()
+        filterTask = nil
         generation += 1
         task?.cancel()
         task = nil
@@ -105,6 +114,9 @@ private let usageLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: 
         accounts = []
         usageReports = [:]
         usageSeries = [:]
+        usageFilter = .all
+        usageAccounts = []
+        lastReportFilter = nil
         reportsDirty = true
         lastUpdated = nil
         live = [:]
@@ -170,6 +182,7 @@ private let usageLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: 
             if queueError == nil { lastLoggedQueueFailure = nil }
             if let drain, drain.available || !drain.records.isEmpty {
                 if await store.ingest(drain.records, trackingAvailable: drain.available) {
+                    reportRevision += 1
                     reportsDirty = true
                 }
             }
@@ -237,24 +250,54 @@ private let usageLog = Logger(subsystem: "dev.ksotis.dynamic-island", category: 
                            queueError: usageQueueError, report: usageReports[range])
     }
 
+    public func setUsageFilter(_ filter: UsageAccountFilter) {
+        filterTask?.cancel()
+        usageFilter = filter
+        reportsDirty = true
+        reportRevision += 1
+        let current = generation
+        filterTask = Task { [weak self] in
+            guard let self, !Task.isCancelled else { return }
+            await self.refreshUsageReports(now: self.nowProvider(), generation: current)
+        }
+    }
+
+    /// Recomputes locally, including demo mode; never drains the queue or changes connection state.
+    public func applyUsageFilter(_ filter: UsageAccountFilter) async {
+        guard !Task.isCancelled else { return }
+        usageFilter = filter
+        reportsDirty = true
+        await refreshUsageReports(now: nowProvider(), generation: generation)
+    }
+
     private func refreshUsageReports(now: Date, generation current: Int) async {
         let day = store.dayStart(now: now)
         let hour = store.hourStart(now: now)
         let currentAccounts = accounts
+        let filter = usageFilter
         guard reportsDirty || lastReportDay != day || lastReportHour != hour
-            || lastReportAccounts != currentAccounts else { return }
+            || lastReportAccounts != currentAccounts || lastReportFilter != filter else { return }
+        reportRevision += 1
+        let revision = reportRevision
         var reports: [UsageRange: UsageReport] = [:]
         for range in UsageRange.allCases {
-            reports[range] = await store.report(range, accounts: currentAccounts, now: now)
+            reports[range] = await store.report(range, accounts: currentAccounts, now: now, filter: filter)
         }
-        let series = await store.seriesAll(now: now)
-        guard generation == current, !Task.isCancelled else { return }
+        let series = await store.seriesAll(now: now, filter: filter)
+        let options = await store.accountUsage(.halfYear, accounts: currentAccounts, now: now)
+        guard generation == current, revision == reportRevision, filter == usageFilter, !Task.isCancelled else { return }
+        let selected = usageAccounts.first { UsageAccountFilter(authIndex: $0.authIndex) == filter }
+        usageAccounts = options
+        if let selected, !options.contains(where: { UsageAccountFilter(authIndex: $0.authIndex) == filter }) {
+            usageAccounts.append(selected)
+        }
         if reports != usageReports { usageReports = reports }
         if series != usageSeries { usageSeries = series }
         reportsDirty = false
         lastReportDay = day
         lastReportHour = hour
         lastReportAccounts = currentAccounts
+        lastReportFilter = filter
     }
 
     private func fetchLive(

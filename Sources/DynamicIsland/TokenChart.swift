@@ -8,6 +8,7 @@ import SwiftUI
 /// reads it out above the plot.
 struct TokenChart: View {
     var series: UsageSeries
+    var scope: String? = nil
     static let plotHeight: CGFloat = 58
 
     @State private var pointer: Date?
@@ -34,7 +35,7 @@ struct TokenChart: View {
             if series.range == .week { weekdayRow }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(series.granularity == .hour ? "Hourly tokens today" : "\(granularityName) tokens, \(series.range.title)")
+        .accessibilityLabel((series.granularity == .hour ? "Hourly tokens today" : "\(granularityName) tokens, \(series.range.title)") + (scope.map { ", " + $0 } ?? ""))
         .accessibilityValue(spokenSummary(now: now))
     }
 

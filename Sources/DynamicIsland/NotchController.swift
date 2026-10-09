@@ -25,6 +25,14 @@ extension NSScreen {
                       width: frame.width - left.width - right.width, height: height)
     }
 
+    var displayInfo: DisplayInfo? {
+        guard let number = deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
+              let uuid = CGDisplayCreateUUIDFromDisplayID(number.uint32Value)?.takeRetainedValue(),
+              let id = UUID(uuidString: CFUUIDCreateString(nil, uuid) as String) else { return nil }
+        return DisplayInfo(id: id, name: localizedName, hasNotch: notchFrame != nil,
+                           isBuiltin: CGDisplayIsBuiltin(number.uint32Value) != 0)
+    }
+
     static var notched: NSScreen? { screens.first { $0.notchFrame != nil } }
 }
 
@@ -133,18 +141,22 @@ final class NotchController {
 
     static let openOnHoverKey = "openOnHover"
 
-    private var cameraRect: CGRect = .zero
+    private var cameraRect: CGRect = .null
 
     func place(on screen: NSScreen) {
         if interaction.isExpanded { send { $0.dismiss() } }
-        let notch = screen.notchFrame ?? CGRect(x: screen.frame.midX - 95, y: screen.frame.maxY - 32, width: 190, height: 32)
-        cameraRect = notch
-        ui.notchSize = notch.size
-        // Never taller than the screen (e.g. with "Larger Text" scaling).
-        ui.panelHeight = min(IslandMetrics.panelSize.height, screen.frame.height - 40)
+        let notch = screen.notchFrame
+        cameraRect = notch ?? .null
+        ui.floating = notch == nil
+        ui.topInset = ui.floating ? 6 : 0
+        ui.notchSize = notch?.size ?? CGSize(width: 130, height: 24)
+        // A floating pill sits below the menu bar, not over a fake camera cutout.
+        let top = ui.floating ? screen.visibleFrame.maxY : screen.frame.maxY
+        let availableHeight = ui.floating ? screen.visibleFrame.height : screen.frame.height
+        ui.panelHeight = min(IslandMetrics.panelSize.height, availableHeight - 40)
         let size = CGSize(width: IslandMetrics.panelSize.width, height: ui.panelHeight)
-        let frame = CGRect(x: (notch.midX - size.width / 2).rounded(), y: screen.frame.maxY - size.height,
-                           width: size.width, height: size.height)
+        let frame = CGRect(x: ((notch?.midX ?? screen.frame.midX) - size.width / 2).rounded(),
+                           y: top - size.height, width: size.width, height: size.height)
         panel.setFrame(frame, display: true)
     }
 
@@ -267,7 +279,8 @@ final class NotchController {
         // The open page scrolls; only a stroke that starts on the header row
         // may close the island. Anywhere else the event goes to the scroll view.
         // Sideways strokes switch pages anywhere on the open island.
-        let inHeader = NSEvent.mouseLocation.y >= panel.frame.maxY - ui.notchSize.height
+        let islandTop = panel.frame.maxY - ui.islandFrame.minY
+        let inHeader = NSEvent.mouseLocation.y >= islandTop - ui.headerHeight
         let action = gesture.feed(pull: Double(event.scrollingDeltaY) * sign * scale,
                                   sideways: Double(event.scrollingDeltaX) * sign * scale,
                                   time: event.timestamp, phase: phase, precise: event.hasPreciseScrollingDeltas,

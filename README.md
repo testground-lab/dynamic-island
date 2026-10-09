@@ -3,7 +3,7 @@
 A notch "dynamic island" for a local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) gateway:
 per-account plan limits (Claude / Codex windows and reset times) and token usage by account and model
 for today, 7 days, 30 days and 6 months, plus a second page with [Jev usage](#jev).
-On displays without a notch it lives in the menu bar.
+Automatic uses a notched display or the menu bar; Settings can choose a display, with a floating pill on nonnotched screens.
 
 ## Build and run
 
@@ -22,6 +22,7 @@ Click the notch (or swipe down on it with two fingers) to open; click elsewhere,
 Inside there are two pages: **AI usage** (Limits, then Usage; scroll to see more) and **Jev**. Switch with a two-finger
 sideways swipe or by clicking the page dots next to the title; the menu-bar popover has the same pages.
 Both pages offer Today / 7d / 30d / 6m; 6m shows 26 weekly bars. "Open on hover" is available in Settings.
+AI Usage also filters totals, chart and By model by account (All by default, or Unattributed); Limits and Jev are unaffected.
 
 ## Data
 

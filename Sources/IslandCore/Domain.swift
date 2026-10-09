@@ -285,23 +285,43 @@ public struct AccountUsage: Identifiable, Hashable, Sendable {
     }
 }
 
+/// Scope of recorded AI usage; empty routing identities are unattributed.
+public enum UsageAccountFilter: Hashable, Sendable {
+    case all, unattributed, account(String)
+
+    public init(authIndex: String?) {
+        self = authIndex.flatMap { $0.isEmpty ? nil : $0 }.map(Self.account) ?? .unattributed
+    }
+
+    public var authIndex: String? {
+        switch self {
+        case .all: nil
+        case .unattributed: ""
+        case .account(let index): index
+        }
+    }
+}
+
 public struct UsageReport: Hashable, Sendable {
     public var range: UsageRange
     public var start: Date
     public var totals: UsageTotals
     public var byAccount: [AccountUsage]
     public var byModel: [ModelUsage]
+    public var filter: UsageAccountFilter
     public var trackingSince: Date?
 
     public init(
         range: UsageRange, start: Date, totals: UsageTotals = .zero,
-        byAccount: [AccountUsage] = [], byModel: [ModelUsage] = [], trackingSince: Date? = nil
+        byAccount: [AccountUsage] = [], byModel: [ModelUsage] = [], trackingSince: Date? = nil,
+        filter: UsageAccountFilter = .all
     ) {
         self.range = range
         self.start = start
         self.totals = totals
         self.byAccount = byAccount
         self.byModel = byModel
+        self.filter = filter
         self.trackingSince = trackingSince
     }
 

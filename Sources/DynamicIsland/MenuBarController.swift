@@ -7,6 +7,8 @@ import SwiftUI
 @MainActor
 final class MenuBarController: NSObject {
     private let model: IslandModel
+    private let jev: JevUsageMonitor
+    private let projects: ProjectUsageMonitor
     private let selection: DashboardSelection
     private var gesture = ScrollGestureRecognizer()
     private var scrollMonitor: Any?
@@ -16,9 +18,11 @@ final class MenuBarController: NSObject {
     private let quit: () -> Void
     private var alive = true
 
-    init(model: IslandModel, jev: JevUsageMonitor, selection: DashboardSelection,
+    init(model: IslandModel, jev: JevUsageMonitor, projects: ProjectUsageMonitor, selection: DashboardSelection,
          openSettings: @escaping () -> Void, quit: @escaping () -> Void) {
         self.model = model
+        self.jev = jev
+        self.projects = projects
         self.selection = selection
         self.openSettings = openSettings
         self.quit = quit
@@ -27,7 +31,7 @@ final class MenuBarController: NSObject {
         popover.behavior = .transient
         popover.appearance = NSAppearance(named: .darkAqua)
         popover.contentViewController = NSHostingController(rootView:
-            PopoverDashboard(model: model, jev: jev, selection: selection, openSettings: { [weak self] in
+            PopoverDashboard(model: model, jev: jev, projects: projects, selection: selection, openSettings: { [weak self] in
                 self?.popover.performClose(nil)
                 openSettings()
             })
@@ -118,7 +122,7 @@ final class MenuBarController: NSObject {
         }
     }
 
-    @objc private func refresh() { model.refreshNow() }
+    @objc private func refresh() { model.refreshNow(); jev.refresh(); projects.refresh() }
     @objc private func settings() { openSettings() }
     @objc private func quitApp() { quit() }
 }
@@ -127,6 +131,7 @@ final class MenuBarController: NSObject {
 struct PopoverDashboard: View {
     let model: IslandModel
     let jev: JevUsageMonitor
+    let projects: ProjectUsageMonitor
     let selection: DashboardSelection
     var snapshotOffset: CGFloat?
     var openSettings: () -> Void
@@ -135,7 +140,7 @@ struct PopoverDashboard: View {
     static let padding: CGFloat = 12
 
     var body: some View {
-        DashboardView(model: model, jev: jev, selection: selection,
+        DashboardView(model: model, jev: jev, projects: projects, selection: selection,
                       headerHeight: Self.headerHeight,
                       pageHeight: PageSizing.viewport(total: Theme.openHeight, header: Self.headerHeight,
                                                       spacing: DashboardMetrics.spacing, chrome: 2 * Self.padding),

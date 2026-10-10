@@ -2,8 +2,8 @@
 
 A notch "dynamic island" for a local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) gateway:
 per-account plan limits (Claude / Codex windows and reset times) and token usage by account and model
-for today, 7 days, 30 days and 6 months, plus a second page with [Jev usage](#jev).
-Automatic uses a notched display or the menu bar; Settings can choose a display, with a floating pill on nonnotched screens.
+for today, 7 days, 30 days and 6 months, plus [Jev usage](#jev) and [local project usage](#projects) pages.
+The default **Follow mouse** mode moves the island with the pointer. Settings also offers **Automatic** (a notched display, or the menu-bar fallback) and fixed connected displays. A fixed display that disconnects falls back to Follow mouse without erasing the saved choice. Nonnotched displays use a floating pill centered in the menu-bar band, with a compact open body and no hardware-notch shoulders; `--menubar` overrides the saved display choice.
 
 ## Build and run
 
@@ -19,9 +19,9 @@ scripts/bundle.sh                  # build/DynamicIsland.app (needed for launch 
 Other development flags (`--expanded`, `--menubar`, `--jev-dir <dir>`) are listed in `Sources/DynamicIsland/main.swift`.
 
 Click the notch (or swipe down on it with two fingers) to open; click elsewhere, press Esc or swipe up on its top row to close.
-Inside there are two pages: **AI usage** (Limits, then Usage; scroll to see more) and **Jev**. Switch with a two-finger
+Inside there are three pages: **AI usage** (Limits, then Usage; scroll to see more), **Jev**, and **Projects**. Switch with a two-finger
 sideways swipe or by clicking the page dots next to the title; the menu-bar popover has the same pages.
-Both pages offer Today / 7d / 30d / 6m; 6m shows 26 weekly bars. "Open on hover" is available in Settings.
+AI Usage and Jev offer Today / 7d / 30d / 6m; their 6m charts show 26 weekly bars. Projects offers the same ranges without a chart. "Open on hover" is available in Settings.
 AI Usage also filters totals, chart and By model by account (All by default, or Unattributed); Limits and Jev are unaffected.
 
 ## Data
@@ -47,6 +47,12 @@ $0.042 per 1M input tokens (output is free at the moment; the rate is `JevPricin
 It reads the hook's per-session logs, `~/.claude/jev-model-router/usage-*.jsonl` (one JSON line per call), every 10 s,
 read-only. Without the hook the page says nothing has been logged yet; calls made before the hook started logging,
 or outside it, are not counted. See context/decisions/0012.
+
+## Projects
+
+The Projects page reports local Claude Code and Codex usage by project, with All / Claude Code / Codex source choices and Today / 7d / 30d / 6m ranges. It shows input, output, cache-read and cache-creation tokens and response counts, ranking projects with neutral meters. It does not estimate cost or add charts.
+
+It indexes available supported history from JSONL files under `~/.claude/projects/` and `~/.codex/sessions/`, read-only and without a management key. A first full catch-up can take several minutes; progress and partial totals are shown until it finishes. A private metadata-only local index resumes across launches, reuses verified unchanged-file results and checks for new or changed logs without reparsing all history. Totals cover all indexed projects, not just the current page; projects are ranked and shown 20 at a time with Previous / Next navigation. Project attribution uses the session's absolute working directory; missing or ambiguous paths are Unattributed, and worktrees remain separate. This is local-session usage, not CLIProxyAPI queue attribution, and is never added to proxy totals. Prompts and conversation text are not retained, stored or logged. Conflicting, unsupported, future-dated, malformed, or unreadable source data can produce explicit warnings; local logs deleted before indexing cannot be reconstructed. See context/requirements/22-project-usage.md and [23](context/requirements/23-complete-project-usage-index.md).
 
 ## Troubleshooting
 

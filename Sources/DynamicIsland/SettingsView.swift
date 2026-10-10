@@ -63,9 +63,10 @@ struct SettingsView: View {
 
             Section("Display") {
                 Picker("Show island on", selection: $displayPreference) {
-                    Text("Automatic").tag(DisplayPreference.automatic)
+                    Text("Follow mouse").tag(DisplayPreference.followMouse)
+                    Text("Automatic (notch)").tag(DisplayPreference.automatic)
                     ForEach(displays) { display in
-                        Text(display.name + (display.isBuiltin ? " (built-in)" : ""))
+                        Text(displayLabels[display.id] ?? display.name)
                             .tag(displayTag(display))
                     }
                     if case .display(let id, let name) = displayPreference,
@@ -77,7 +78,7 @@ struct SettingsView: View {
                     preference.save(to: .standard)
                     displayChanged()
                 }
-                Text("Automatic uses a notched display, or the menu bar if none is connected. A chosen display without a notch shows a floating pill. If disconnected, Automatic is used until it reconnects.")
+                Text("Follow mouse moves the closed island to the pointer’s display after a short pause; an open island stays put until closed. Automatic uses a notch or the menu bar. Other displays show a floating pill below the menu band. A disconnected fixed display follows the mouse until it reconnects.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -148,6 +149,11 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)) { _ in
             displays = NSScreen.screens.compactMap(\.displayInfo)
         }
+    }
+
+    private var displayLabels: [UUID: String] {
+        DisplayGeometry.labels(displays: displays, frames: NSScreen.displayFrames,
+                               mainID: NSScreen.screens.first?.displayInfo?.id)
     }
 
     private func displayTag(_ display: DisplayInfo) -> DisplayPreference {

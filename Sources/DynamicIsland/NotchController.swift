@@ -1,4 +1,5 @@
 import AppKit
+import ObjectiveC
 import IslandCore
 import SwiftUI
 
@@ -31,6 +32,12 @@ extension NSScreen {
               let id = UUID(uuidString: CFUUIDCreateString(nil, uuid) as String) else { return nil }
         return DisplayInfo(id: id, name: localizedName, hasNotch: notchFrame != nil,
                            isBuiltin: CGDisplayIsBuiltin(number.uint32Value) != 0)
+    }
+
+    static var displayFrames: [DisplayFrame] {
+        screens.compactMap { screen in
+            screen.displayInfo.map { DisplayFrame(id: $0.id, frame: screen.frame) }
+        }
     }
 
     static var notched: NSScreen? { screens.first { $0.notchFrame != nil } }
@@ -105,16 +112,21 @@ final class NotchController {
     private var observers: [NSObjectProtocol] = []
     private var timers: [IslandTimer: DispatchWorkItem] = [:]
     private let pinnedExpanded: Bool
+    private let didClose: () -> Void
+    private var alive = true
+    private var layoutRevision = 0
+    var isExpanded: Bool { ui.isExpanded }
 
-    init(model: IslandModel, jev: JevUsageMonitor, selection: DashboardSelection, screen: NSScreen,
-         pinnedExpanded: Bool = false,
+    init(model: IslandModel, jev: JevUsageMonitor, projects: ProjectUsageMonitor, selection: DashboardSelection, screen: NSScreen,
+         pinnedExpanded: Bool = false, didClose: @escaping () -> Void = {},
          openSettings: @escaping () -> Void, quit: @escaping () -> Void) {
         self.pinnedExpanded = pinnedExpanded
+        self.didClose = didClose
         interaction = IslandInteraction(openOnHover: UserDefaults.standard.bool(forKey: Self.openOnHoverKey))
         panel = NotchPanel(contentRect: .zero)
         ui = IslandUIState(selection: selection)
         var tap: () -> Void = {}
-        let root = IslandView(model: model, jev: jev, ui: ui, onTap: { tap() },
+        let root = IslandView(model: model, jev: jev, projects: projects, ui: ui, onTap: { tap() },
                               openSettings: openSettings, quit: quit)
         let hosting = IslandHostingView(rootView: root)
         hosting.sizingOptions = []
@@ -143,24 +155,64 @@ final class NotchController {
 
     private var cameraRect: CGRect = .null
 
+    /// Relocating a closed island never dismisses an expanded one as a side effect.
     func place(on screen: NSScreen) {
-        if interaction.isExpanded { send { $0.dismiss() } }
+        guard alive else { return }
+        if !ui.isExpanded { send { $0.pointerExited() } }
         let notch = screen.notchFrame
         cameraRect = notch ?? .null
         ui.floating = notch == nil
-        ui.topInset = ui.floating ? 6 : 0
-        ui.notchSize = notch?.size ?? CGSize(width: 130, height: 24)
-        // A floating pill sits below the menu bar, not over a fake camera cutout.
-        let top = ui.floating ? screen.visibleFrame.maxY : screen.frame.maxY
-        let availableHeight = ui.floating ? screen.visibleFrame.height : screen.frame.height
-        ui.panelHeight = min(IslandMetrics.panelSize.height, availableHeight - 40)
-        let size = CGSize(width: IslandMetrics.panelSize.width, height: ui.panelHeight)
-        let frame = CGRect(x: ((notch?.midX ?? screen.frame.midX) - size.width / 2).rounded(),
-                           y: top - size.height, width: size.width, height: size.height)
+        ui.topInset = 0
+        let floatingLayout = FloatingIslandLayout(menuHeight: Self.menuBarHeight())
+        ui.notchSize = notch?.size ?? floatingLayout.idleSize
+        let frame = DisplayGeometry.panelFrame(screen: screen.frame, visible: screen.visibleFrame,
+                                              notch: notch, menuHeight: floatingLayout.menuHeight,
+                                              preferredSize: IslandMetrics.panelSize)
+        ui.panelHeight = frame.height
         panel.setFrame(frame, display: true)
+        panel.ignoresMouseEvents = true
+        updateHitAreaAfterLayout()
+    }
+
+    /// Prefer the public main-menu metric. Accessory apps may have no main menu;
+    /// AppKit's class selector then supplies the system band. Swift exposes only
+    /// the instance property, so validate the getter's ABI before bridging it.
+    private static func menuBarHeight() -> CGFloat {
+        if let height = NSApp.mainMenu?.menuBarHeight, height.isFinite, height > 0 { return height }
+        let selector = NSSelectorFromString("menuBarHeight")
+        guard let method = class_getClassMethod(NSMenu.self, selector),
+              method_getNumberOfArguments(method) == 2,
+              MemoryLayout<CGFloat>.size == MemoryLayout<Double>.size else { return 24 }
+        let returnType = method_copyReturnType(method)
+        defer { free(returnType) }
+        guard String(cString: returnType) == "d" else { return 24 }
+        typealias HeightGetter = @convention(c) (AnyObject, Selector) -> CGFloat
+        let getter = unsafeBitCast(method_getImplementation(method), to: HeightGetter.self)
+        return getter(NSMenu.self, selector)
+    }
+
+    /// Hardware removal is the sole forced-dismiss exception, including --expanded.
+    func dismissForRemovedScreen() {
+        if pinnedExpanded {
+            ui.presentation = .collapsed
+            releaseFocus()
+        } else {
+            send { $0.dismiss() }
+        }
+    }
+
+    private func updateHitAreaAfterLayout() {
+        layoutRevision += 1
+        let revision = layoutRevision
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self, self.alive, self.layoutRevision == revision else { return }
+            self.pointerMoved()
+        }
     }
 
     func tearDown() {
+        alive = false
+        layoutRevision += 1
         monitors.forEach(NSEvent.removeMonitor)
         monitors.removeAll()
         observers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
@@ -173,7 +225,8 @@ final class NotchController {
     // MARK: Events -> interaction
 
     private func send(_ event: (inout IslandInteraction) -> [IslandEffect]) {
-        guard !pinnedExpanded else { return }
+        guard alive, !pinnedExpanded else { return }
+        let wasExpanded = ui.isExpanded
         interaction.openOnHover = UserDefaults.standard.bool(forKey: Self.openOnHoverKey)
         let effects = event(&interaction)
         if ui.presentation != interaction.presentation {
@@ -181,9 +234,10 @@ final class NotchController {
             ui.presentation = interaction.presentation
             // The island's hit area changed under a pointer that may not move:
             // re-evaluate click-through once the new frame is laid out.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.pointerMoved() }
+            updateHitAreaAfterLayout()
         }
         effects.forEach(run)
+        if wasExpanded, !ui.isExpanded { didClose() }
     }
 
     private func run(_ effect: IslandEffect) {
@@ -217,7 +271,7 @@ final class NotchController {
     }
 
     private func installMonitors() {
-        let moves: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged]
+        let moves: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
         if let global = NSEvent.addGlobalMonitorForEvents(matching: moves, handler: { [weak self] _ in
             MainActor.assumeIsolated { self?.pointerMoved() }
         }) { monitors.append(global) }

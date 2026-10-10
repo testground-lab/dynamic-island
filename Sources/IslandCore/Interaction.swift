@@ -221,5 +221,5 @@ public struct ScrollGestureRecognizer: Equatable, Sendable {
 }
 
 public enum DashboardPage: String, CaseIterable, Hashable, Sendable {
-    case usage, jev
+    case usage, jev, projects
 }

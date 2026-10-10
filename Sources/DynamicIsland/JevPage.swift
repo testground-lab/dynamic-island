@@ -6,6 +6,7 @@ extension DashboardPage {
         switch self {
         case .usage: "AI usage"
         case .jev: "Jev"
+        case .projects: "Projects"
         }
     }
 }

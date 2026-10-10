@@ -11,6 +11,7 @@ enum Snapshots {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let model = IslandModel.demo()
         let jev = JevUsageMonitor.demo()
+        let projects = ProjectUsageMonitor.demo()
         let noJev = JevUsageMonitor(directory: nil)
         await noJev.reload()
         let notch = CGSize(width: 220, height: 38)
@@ -36,6 +37,9 @@ enum Snapshots {
             ("jev-30d", model, jev, open, .jev, 0, .month),
             ("jev-6m", model, jev, open, .jev, 0, .halfYear),
             ("jev-no-log", model, noJev, open, .jev, 0, .today),
+            ("projects-today", model, jev, open, .projects, 0, .today),
+            ("projects-30d", model, jev, open, .projects, 0, .month),
+            ("projects-6m", model, jev, open, .projects, 0, .halfYear),
         ]
         for (name, model, jev, presentation, page, offset, range) in states {
             let ui = IslandUIState()
@@ -44,12 +48,40 @@ enum Snapshots {
             ui.selection.show(page)
             ui.selection.usageRange = range
             ui.selection.jevRange = range
+            ui.selection.projectsRange = range
             ui.isSnapshot = true
             ui.snapshotOffset = offset
             let expanded = ui.isExpanded
-            let view = IslandView(model: model, jev: jev, ui: ui, onTap: {}, openSettings: {}, quit: {})
+            let view = IslandView(model: model, jev: jev, projects: projects, ui: ui, onTap: {}, openSettings: {}, quit: {})
                 .frame(width: IslandMetrics.panelSize.width, height: expanded ? ui.panelHeight : 60)
                 .background(Color(white: 0.82)) // stand-in for a light desktop
+            try write(view, to: directory.appendingPathComponent(name + ".png"))
+        }
+        // Fixture-only UI review: source filters and external-display shape, not hardware placement.
+        let projectStates: [(String, DashboardPage, ProjectUsageSource?, Bool, IslandPresentation)] = [
+            ("projects-claude-30d", .projects, .claudeCode, false, open),
+            ("projects-codex-30d", .projects, .codex, false, open),
+            ("floating-idle", .projects, nil, true, .collapsed),
+            ("floating-ai-usage", .usage, nil, true, open),
+            ("floating-jev", .jev, nil, true, open),
+            ("floating-projects-30d", .projects, nil, true, open),
+        ]
+        let floatingLayout = FloatingIslandLayout(menuHeight: 30)
+        for (name, page, source, floating, presentation) in projectStates {
+            let ui = IslandUIState()
+            ui.floating = floating
+            ui.topInset = 0
+            ui.notchSize = floating ? floatingLayout.idleSize : notch
+            ui.presentation = presentation
+            ui.selection.show(page)
+            ui.selection.projectsRange = .month
+            ui.selection.projectsSource = source
+            ui.isSnapshot = true
+            ui.snapshotOffset = 0
+            let view = IslandView(model: model, jev: jev, projects: projects, ui: ui,
+                                  onTap: {}, openSettings: {}, quit: {})
+                .frame(width: IslandMetrics.panelSize.width, height: ui.isExpanded ? ui.panelHeight : 60)
+                .background(Color(white: 0.82))
             try write(view, to: directory.appendingPathComponent(name + ".png"))
         }
         // The status icon is a template image: AppKit tints it for the menu bar.
@@ -61,7 +93,7 @@ enum Snapshots {
                           to: directory.appendingPathComponent(name + ".png"))
             }
         }
-        try write(PopoverDashboard(model: model, jev: jev, selection: DashboardSelection(), snapshotOffset: 0, openSettings: {}),
+        try write(PopoverDashboard(model: model, jev: jev, projects: projects, selection: DashboardSelection(), snapshotOffset: 0, openSettings: {}),
                   to: directory.appendingPathComponent("menubar-popover.png"))
     }
 

@@ -3,20 +3,22 @@ import Testing
 
 @testable import IslandCore
 
-@Test func bothPagesShownByDefault() {
+@Test func allPagesShownByDefault() {
     let pages = DashboardPages(defaults: VolatileDefaults())
-    #expect(pages.shown == [.usage, .jev])
+    #expect(pages.shown == [.usage, .jev, .projects])
     #expect(pages.current == .usage)
-    #expect(!pages.isLocked(.usage) && !pages.isLocked(.jev))
+    #expect(DashboardPage.allCases.allSatisfy { !pages.isLocked($0) })
 }
 
 @Test func shownPagesPersist() {
     let defaults = VolatileDefaults()
     var pages = DashboardPages()
     pages.setEnabled(.jev, false)
+    pages.setEnabled(.projects, false)
     pages.save(to: defaults)
     #expect(defaults.object(forKey: "showUsagePage") as? Bool == true)
     #expect(defaults.object(forKey: "showJevPage") as? Bool == false)
+    #expect(defaults.object(forKey: "showProjectsPage") as? Bool == false)
     #expect(DashboardPages(defaults: defaults).shown == [.usage])
 
     pages.setEnabled(.jev, true)
@@ -25,53 +27,63 @@ import Testing
     let restored = DashboardPages(defaults: defaults)
     #expect(restored.shown == [.jev])
     #expect(restored.current == .jev)
+    pages.setEnabled(.projects, true)
+    pages.setEnabled(.jev, false)
+    pages.save(to: defaults)
+    #expect(DashboardPages(defaults: defaults).shown == [.projects])
 }
 
-@Test func savedStateWithNoPageShowsBoth() {
+@Test func savedStateWithNoPageShowsAll() {
     let defaults = VolatileDefaults()
     defaults.set(false, forKey: "showUsagePage")
     defaults.set(false, forKey: "showJevPage")
-    #expect(DashboardPages(defaults: defaults).shown == [.usage, .jev])
-    #expect(DashboardPages(enabled: []).shown == [.usage, .jev])
+    defaults.set(false, forKey: "showProjectsPage")
+    #expect(DashboardPages(defaults: defaults).shown == DashboardPage.allCases)
+    #expect(DashboardPages(enabled: []).shown == DashboardPage.allCases)
 }
 
 @Test func nonBoolSavedValueHidesOnlyThatPage() {
     let defaults = VolatileDefaults()
     defaults.set("garbage", forKey: "showJevPage")
-    #expect(DashboardPages(defaults: defaults).shown == [.usage])
+    #expect(DashboardPages(defaults: defaults).shown == [.usage, .projects])
     defaults.set(["x"], forKey: "showUsagePage")
-    #expect(DashboardPages(defaults: defaults).shown == [.usage, .jev]) // never zero pages
-}
-
-@Test func theLastShownPageCantBeHidden() {
-    var pages = DashboardPages()
-    pages.setEnabled(.jev, false)
-    #expect(pages.isLocked(.usage))
-    #expect(!pages.isLocked(.jev)) // hidden: turning it on is always allowed
-    pages.setEnabled(.usage, false)
-    #expect(pages.shown == [.usage])
-    #expect(pages.current == .usage)
-    pages.setEnabled(.jev, true)
-    #expect(pages.shown == [.usage, .jev])
-    #expect(!pages.isLocked(.usage))
+    #expect(DashboardPages(defaults: defaults).shown == [.projects])
+    defaults.set("garbage", forKey: "showProjectsPage")
+    #expect(DashboardPages(defaults: defaults).shown == DashboardPage.allCases) // never zero pages
 }
 
 @Test(arguments: DashboardPage.allCases)
-func hidingTheOpenPageOpensTheOther(_ open: DashboardPage) {
+func theLastShownPageCantBeHidden(_ only: DashboardPage) {
+    var pages = DashboardPages(enabled: [only])
+    #expect(pages.isLocked(only))
+    pages.setEnabled(only, false)
+    #expect(pages.shown == [only])
+    #expect(pages.current == only)
+    for other in DashboardPage.allCases where other != only {
+        #expect(!pages.isLocked(other))
+        pages.setEnabled(other, true)
+        #expect(!pages.isLocked(only))
+    }
+    #expect(pages.shown == DashboardPage.allCases)
+}
+
+@Test(arguments: DashboardPage.allCases)
+func hidingTheOpenPageOpensTheFirstRemaining(_ open: DashboardPage) {
     var pages = DashboardPages(current: open)
     pages.setEnabled(open, false)
-    let other = DashboardPage.allCases.first { $0 != open }
-    #expect(pages.current == other)
-    #expect(pages.shown == [other])
+    let remaining = DashboardPage.allCases.filter { $0 != open }
+    #expect(pages.current == remaining.first)
+    #expect(pages.shown == remaining)
 }
 
 @Test func hidingAnotherPageKeepsTheOpenOne() {
     var pages = DashboardPages(current: .jev)
     pages.setEnabled(.usage, false)
     #expect(pages.current == .jev)
+    pages.setEnabled(.projects, false)
+    #expect(pages.current == .jev)
 }
 
-/// Applies each action in turn; returns which ones moved and the page reached.
 private func swipe(_ pages: DashboardPages, _ actions: [ScrollGestureAction]) -> ([Bool], DashboardPage) {
     var pages = pages
     let moved = actions.map { pages.apply($0) }
@@ -79,18 +91,20 @@ private func swipe(_ pages: DashboardPages, _ actions: [ScrollGestureAction]) ->
 }
 
 @Test func swipesStepThroughShownPagesAndStopAtTheEnds() {
-    let (moved, end) = swipe(DashboardPages(), [.previousPage, .nextPage, .nextPage, .open, .close])
-    #expect(moved == [false, true, false, false, false])
-    #expect(end == .jev)
-    let (back, start) = swipe(DashboardPages(current: .jev), [.previousPage, .previousPage])
-    #expect(back == [true, false])
+    let (moved, end) = swipe(DashboardPages(), [.previousPage, .nextPage, .nextPage, .nextPage, .open, .close])
+    #expect(moved == [false, true, true, false, false, false])
+    #expect(end == .projects)
+    let (back, start) = swipe(DashboardPages(current: .projects), [.previousPage, .previousPage, .previousPage])
+    #expect(back == [true, true, false])
     #expect(start == .usage)
+    let (skipHidden, second) = swipe(DashboardPages(enabled: [.usage, .projects]), [.nextPage, .nextPage])
+    #expect(skipHidden == [true, false] && second == .projects)
 }
 
 @Test(arguments: DashboardPage.allCases)
 func onePageIgnoresSwipesAndDots(_ only: DashboardPage) {
     var pages = DashboardPages(enabled: [only])
-    #expect(pages.shown == [only]) // a single dot stays in the header
+    #expect(pages.shown == [only])
     let (moved, end) = swipe(pages, [.nextPage, .previousPage])
     #expect(moved == [false, false])
     #expect(end == only)
@@ -101,13 +115,20 @@ func onePageIgnoresSwipesAndDots(_ only: DashboardPage) {
 }
 
 @Test func requestedPageFallsBackWhenHidden() {
-    // --page jev
-    var both = DashboardPages()
-    both.show(.jev)
-    #expect(both.current == .jev)
+    var all = DashboardPages()
+    all.show(.projects)
+    #expect(all.current == .projects)
     var usageOnly = DashboardPages(enabled: [.usage])
-    usageOnly.show(.jev)
+    usageOnly.show(.projects)
     #expect(usageOnly.current == .usage)
     #expect(DashboardPages(current: .jev, enabled: [.usage]).current == .usage)
-    #expect(DashboardPages(current: .usage, enabled: [.jev]).current == .jev)
+    #expect(DashboardPages(current: .usage, enabled: [.projects]).current == .projects)
+}
+
+@Test func oldTwoPagePreferencesKeepChoicesAndEnableNewProjectsPage() {
+    let defaults = VolatileDefaults()
+    defaults.set(false, forKey: "showUsagePage")
+    defaults.set(true, forKey: "showJevPage")
+    #expect(DashboardPages(defaults: defaults).shown == [.jev, .projects])
+    #expect(DashboardPages(defaults: defaults).current == .jev)
 }

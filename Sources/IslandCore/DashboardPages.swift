@@ -58,6 +58,7 @@ extension DashboardPages {
         switch page {
         case .usage: "showUsagePage"
         case .jev: "showJevPage"
+        case .projects: "showProjectsPage"
         }
     }
 

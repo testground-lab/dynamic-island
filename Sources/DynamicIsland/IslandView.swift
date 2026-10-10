@@ -10,6 +10,8 @@ final class DashboardSelection {
     private(set) var pages: DashboardPages
     var usageRange: UsageRange = .today
     var jevRange: UsageRange = .today
+    var projectsRange: UsageRange = .today
+    var projectsSource: ProjectUsageSource?
     @ObservationIgnored private let defaults: UserDefaults?
 
     /// `defaults` keeps the shown pages; nil keeps them in memory only (snapshots).
@@ -81,6 +83,7 @@ enum IslandMetrics {
 struct IslandView: View {
     let model: IslandModel
     let jev: JevUsageMonitor
+    let projects: ProjectUsageMonitor
     let ui: IslandUIState
     /// Any click on the island; the controller decides what it means
     /// (open, pin, or close when it lands on the camera area of the open header).
@@ -110,7 +113,7 @@ struct IslandView: View {
             .simultaneousGesture(TapGesture().onEnded(onTap))
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { ui.islandFrame = $0 }
             .contextMenu {
-                Button("Refresh Now") { model.refreshNow() }
+                Button("Refresh Now") { model.refreshNow(); jev.refresh(); projects.refresh() }
                 Button("Settings…", action: openSettings)
                 Divider()
                 Button("Quit Dynamic Island", action: quit)
@@ -124,8 +127,10 @@ struct IslandView: View {
     }
 
     private var expandedContent: some View {
-        let shoulder = NotchShape.shoulder(height: 200)
-        return DashboardView(model: model, jev: jev, selection: ui.selection,
+        let horizontalInset = ui.floating ? FloatingIslandLayout.contentInset
+            : NotchShape.shoulder(height: 200) + IslandMetrics.contentInset
+        let width = ui.floating ? FloatingIslandLayout.expandedWidth : IslandMetrics.expandedWidth
+        return DashboardView(model: model, jev: jev, projects: projects, selection: ui.selection,
                              headerHeight: ui.headerHeight,
                              cameraGap: ui.floating ? 0 : ui.notchSize.width,
                              pageHeight: PageSizing.viewport(total: Theme.openHeight, header: ui.headerHeight,
@@ -133,9 +138,9 @@ struct IslandView: View {
                                                              chrome: IslandMetrics.bottomInset),
                              snapshotOffset: ui.isSnapshot ? (ui.snapshotOffset ?? 0) : nil,
                              openSettings: openSettings)
-            .padding(.horizontal, shoulder + IslandMetrics.contentInset)
+            .padding(.horizontal, horizontalInset)
             .padding(.bottom, IslandMetrics.bottomInset)
-            .frame(width: IslandMetrics.expandedWidth)
+            .frame(width: width)
     }
 }
 

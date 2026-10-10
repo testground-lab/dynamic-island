@@ -2,19 +2,20 @@ import IslandCore
 import SwiftUI
 
 enum DashboardMetrics {
-    /// Content column of the open island (480 wide minus shoulders and insets).
-    static let contentWidth: CGFloat = 424
+    /// Shared column width; only the island's outer shoulders/insets vary.
+    static let contentWidth = FloatingIslandLayout.contentWidth
     static let spacing: CGFloat = 6
     static let cardRadius: CGFloat = 14
 }
 
-/// The open island's content: a header row beside the camera, then one of two
-/// pages, switched by a sideways swipe or the header's dots. Page one scrolls
-/// through Limits then Usage; page two is Jev usage. Shared by the notch
+/// The open island's content: a header row beside the camera, then one of the
+/// shown pages, switched by a sideways swipe or the header's dots. AI usage,
+/// Jev and local Projects retain separate data sources. Shared by the notch
 /// island and the menu-bar popover.
 struct DashboardView: View {
     let model: IslandModel
     let jev: JevUsageMonitor
+    let projects: ProjectUsageMonitor
     /// Shown pages, the open one and each page's range.
     @Bindable var selection: DashboardSelection
     /// Header height; in the island this is the camera's height so the header
@@ -90,6 +91,7 @@ struct DashboardView: View {
                 IconButton(symbol: "arrow.clockwise", help: "Refresh now") {
                     model.refreshNow()
                     jev.refresh()
+                    projects.refresh()
                 }
                 IconButton(symbol: "gearshape.fill", help: "Settings", action: openSettings)
             }
@@ -111,6 +113,11 @@ struct DashboardView: View {
             case .jev:
                 ScrollingPage(height: pageHeight, snapshotOffset: snapshotOffset) { _ in
                     JevPage(jev: jev, range: $selection.jevRange)
+                }
+                .transition(pageTransition(from: .trailing))
+            case .projects:
+                ScrollingPage(height: pageHeight, snapshotOffset: snapshotOffset) { _ in
+                    ProjectsPage(projects: projects, range: $selection.projectsRange, source: $selection.projectsSource)
                 }
                 .transition(pageTransition(from: .trailing))
             }
@@ -602,18 +609,21 @@ struct RangePicker: View {
     }
 }
 
-private struct BreakdownRow: Identifiable {
+struct BreakdownRow: Identifiable {
     var id: String
     var name: String
     var provider: Provider?
     var totals: UsageTotals
+    var detail: String? = nil
 }
 
 /// A ranked list: name and tokens on one line, a hairline share bar under it.
-private struct BreakdownCard: View {
+struct BreakdownCard: View {
     var title: String
     var symbol: String
     var rows: [BreakdownRow]
+    var countLabel = "req"
+    var countName = "requests"
     private let limit = 7
     @State private var showAll = false
 
@@ -625,7 +635,7 @@ private struct BreakdownCard: View {
                         .foregroundStyle(Theme.secondary).frame(width: 14)
                     Text(title).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.white.opacity(0.9))
                     Spacer(minLength: 0)
-                    Text("tok · req").font(.system(size: 8.5)).foregroundStyle(Theme.tertiary)
+                    Text("tok · \(countLabel)").font(.system(size: 8.5)).foregroundStyle(Theme.tertiary)
                 }
                 .frame(height: 15)
                 let peak = max(rows.map(\.totals.totalTokens).max() ?? 1, 1)
@@ -653,7 +663,7 @@ private struct BreakdownCard: View {
                         Meter(value: Double(row.totals.totalTokens) / Double(peak),
                               tint: (row.provider?.tint ?? .white).opacity(0.8), height: 2)
                     }
-                    .help("\(row.name): \(row.totals.totalTokens) tokens (in \(row.totals.inputTokens), out \(row.totals.outputTokens)), \(row.totals.requests) requests" + (row.totals.failed > 0 ? ", \(row.totals.failed) failed" : ""))
+                    .help("\(row.detail ?? row.name): \(row.totals.totalTokens) tokens (in \(row.totals.inputTokens), out \(row.totals.outputTokens)), \(row.totals.requests) \(countName)" + (row.totals.failed > 0 ? ", \(row.totals.failed) failed" : ""))
                     .accessibilityElement(children: .combine)
                 }
                 if rows.count > limit {

@@ -28,6 +28,11 @@ Requirements and decisions for this project, one per file, so new sessions have 
 - [18-page-toggles](requirements/18-page-toggles.md): Show or hide each page in Settings (one always stays on)
 - [19-account-filter](requirements/19-account-filter.md): Scope AI totals, chart and models to an account
 - [20-display-selector](requirements/20-display-selector.md): Choose a display, with a floating pill on nonnotched screens
+- [21-follow-mouse-display](requirements/21-follow-mouse-display.md): Follow the mouse or choose a display
+- [22-project-usage](requirements/22-project-usage.md): Local project usage from Claude Code and Codex logs
+- [23-complete-project-usage-index](requirements/23-complete-project-usage-index.md): Complete available supported project history with resumable metadata-only indexing
+- [24-top-attached-external-island](requirements/24-top-attached-external-island.md): Flush top-center placement on non-notched external displays (superseded by 25)
+- [25-menu-bar-centered-external-island](requirements/25-menu-bar-centered-external-island.md): Center the external idle pill in the menu band and remove open-body shoulder margins
 
 ## Decisions
 - [0001-native-swiftui-lsuielement](decisions/0001-native-swiftui-lsuielement.md): Native SwiftUI app, LSUIElement
@@ -43,6 +48,7 @@ Requirements and decisions for this project, one per file, so new sessions have 
 - [0011-review-process](decisions/0011-review-process.md): Review process
 - [0012-jev-usage-from-router-log](decisions/0012-jev-usage-from-router-log.md): Jev usage from the router's local log, not the console API
 - [0013-usage-retention-183-days](decisions/0013-usage-retention-183-days.md): Keep usage history 183 days
+- [0014-project-usage-index](decisions/0014-project-usage-index.md): Index complete available local project usage privately
 
 ## Open items
 - [open-items](open-items.md): undecided labels and what still needs checking on screen

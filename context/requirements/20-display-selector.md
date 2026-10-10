@@ -4,6 +4,6 @@
 
 **Source:** User approval, 2026-10-09.
 
-**Status:** current (extends [04](04-compact-like-vorssaint.md); supersedes [05](05-idle-shows-only-notch.md) only for an explicitly selected nonnotched display). UI and real hardware behavior remain unverified.
+**Status:** Current except for default target, external-pill geometry, and disconnect fallback, which are superseded by [21](21-follow-mouse-display.md). The saved stable display UUID and name remain valid. UI and real hardware behavior remain unverified.
 
 **Where in code:** `IslandCore/DisplayChoice.swift` (preference persistence, pure target resolver), `DynamicIsland/SettingsView.swift`, `main.swift`, `NotchController.swift` (screen identity, placement, hit-testing), `IslandView.swift` (floating outline).

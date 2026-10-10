@@ -4,6 +4,6 @@
 
 **Source:** User request, 2026-10-03.
 
-**Status:** current (extends [16](16-swipe-pages-jev.md))
+**Status:** current (extends [16](16-swipe-pages-jev.md); extended by [22](22-project-usage.md) for the Projects page, if its page toggle is offered, while keeping at least one page enabled).
 
 **Where in code:** `IslandCore/DashboardPages.swift` (shown pages, open page, swipe steps, persistence), `IslandView.swift` (`DashboardSelection`), `SettingsView.swift` (Pages section), `DashboardView.swift` (`PageDots`), `main.swift` (`--page`)

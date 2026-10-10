@@ -5,8 +5,8 @@ import IslandCore
 ///   --demo      render bundled fixtures, no network, no Keychain
 ///   --expanded  keep the island expanded
 ///   --menubar   force the menu-bar fallback even on a notched display
-///   --page jev  open on the Jev page (if it is shown; see Settings)
-///   --range <today|week|month|halfYear>  start both pages on this range
+///   --page <usage|jev|projects>  open on a shown page (see Settings)
+///   --range <today|week|month|halfYear>  start every page on this range
 ///   --jev-dir <dir>  read Jev usage logs from this folder instead of the router's (also with --demo)
 ///   --snapshot <dir>  render demo PNGs and exit
 @MainActor
@@ -14,11 +14,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let arguments = Set(CommandLine.arguments)
     private var model: IslandModel!
     private var jev: JevUsageMonitor!
+    private var projects: ProjectUsageMonitor!
     private let selection = DashboardSelection(defaults: .standard)
     private var settings: SettingsWindowController!
     private var notch: NotchController?
     private var menuBar: MenuBarController?
     private var screenObserver: NSObjectProtocol?
+    private var pointerMonitors: [Any] = []
+    private var settleWork: DispatchWorkItem?
+    private var relocation = DisplayRelocation(current: .menuBar)
+    private var pointerDisplayID: UUID?
+    private var hasLaidOut = false
+    private var alive = true
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let index = CommandLine.arguments.firstIndex(of: "--snapshot"), index + 1 < CommandLine.arguments.count {
@@ -55,14 +62,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 : JevUsageMonitor(directory: JevUsageMonitor.defaultDirectory)
         }
         jev.start()
+        projects = arguments.contains("--demo") ? ProjectUsageMonitor.demo() : ProjectUsageMonitor()
+        projects.start()
         if let page = Self.value(after: "--page").flatMap(DashboardPage.init(rawValue:)) { selection.show(page) }
         if let range = Self.value(after: "--range").flatMap(UsageRange.init(rawValue:)) {
             selection.usageRange = range
             selection.jevRange = range
+            selection.projectsRange = range
         }
         settings = SettingsWindowController(model: model, selection: selection, displayChanged: { [weak self] in self?.layoutForScreens() })
 
         layoutForScreens()
+        installPointerMonitors()
         screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                                object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.layoutForScreens() }
@@ -71,36 +82,103 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if model.connection == .needsKey { settings.show() }
     }
 
-    /// Island on the notched display when there is one; menu-bar item otherwise.
+    private func resolvedTarget() -> DisplayTarget {
+        pointerDisplayID = DisplayGeometry.containing(NSEvent.mouseLocation, displays: NSScreen.displayFrames,
+                                                      fallback: pointerDisplayID)
+        return DisplayTarget.resolve(DisplayPreference(defaults: .standard),
+                                     displays: NSScreen.screens.compactMap(\.displayInfo),
+                                     pointerDisplayID: pointerDisplayID,
+                                     forceMenuBar: arguments.contains("--menubar"))
+    }
+
+    /// Topology and Settings invalidate maturity even when the UUID remains the same.
     private func layoutForScreens() {
+        guard alive else { return }
+        settleWork?.cancel()
+        settleWork = nil
+        relocation.invalidate()
+        let target = resolvedTarget()
+        let screens = NSScreen.screens
+        let available = Set(screens.compactMap { $0.displayInfo?.id })
+        if !hasLaidOut {
+            hasLaidOut = true
+            relocation.reset(to: target)
+            present(target)
+        } else if relocation.recoverIfDisconnected(to: target, available: available) {
+            notch?.dismissForRemovedScreen()
+            notch?.tearDown()
+            notch = nil
+            present(target)
+        } else {
+            // Same-screen geometry can change without a UUID change (resolution/menu/Dock).
+            if let id = relocation.current.displayID, let screen = screens.first(where: { $0.displayInfo?.id == id }) {
+                notch?.place(on: screen)
+            }
+            routePointer()
+        }
+    }
+
+    /// Owned by the app, so pointer following also works while Automatic is a menu-bar item.
+    private func installPointerMonitors() {
+        let moves: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: moves, handler: { [weak self] _ in
+            MainActor.assumeIsolated { self?.routePointer() }
+        }) { pointerMonitors.append(global) }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: moves, handler: { [weak self] event in
+            self?.routePointer()
+            return event
+        }) { pointerMonitors.append(local) }
+    }
+
+    private func routePointer() {
+        guard alive else { return }
+        let token = relocation.observe(resolvedTarget())
+        if relocation.candidate == nil {
+            settleWork?.cancel()
+            settleWork = nil
+        }
+        guard let token else { return }
+        settleWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.alive, self.relocation.revision == token else { return }
+            // A delayed callback must not apply a target the pointer has already left.
+            self.routePointer()
+            guard self.relocation.revision == token else { return }
+            self.settleWork = nil
+            if let target = self.relocation.settle(token, expanded: self.notch?.isExpanded ?? false) {
+                self.present(target)
+            }
+        }
+        settleWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + DisplayRelocation.settleDelay, execute: work)
+    }
+
+    private func islandDidClose() {
+        guard alive else { return }
+        routePointer()
+        if let target = relocation.applyIfReady(expanded: notch?.isExpanded ?? false) { present(target) }
+    }
+
+    private func present(_ target: DisplayTarget) {
         let openSettings: () -> Void = { [weak self] in self?.settings.show() }
         let quit: () -> Void = { NSApp.terminate(nil) }
-        let screens = NSScreen.screens
-        let target = DisplayTarget.resolve(DisplayPreference(defaults: .standard),
-                                           displays: screens.compactMap(\.displayInfo),
-                                           forceMenuBar: arguments.contains("--menubar"))
-        let screen: NSScreen?
-        if case .island(let id, _) = target {
-            screen = screens.first { $0.displayInfo?.id == id }
-        } else {
-            screen = nil
-        }
-
-        if let screen {
+        let screen = NSScreen.screens.first { $0.displayInfo?.id == target.displayID }
+        if let screen, target.displayID != nil {
             menuBar?.tearDown()
             menuBar = nil
             if let notch {
                 notch.place(on: screen)
             } else {
-                notch = NotchController(model: model, jev: jev, selection: selection, screen: screen,
+                notch = NotchController(model: model, jev: jev, projects: projects, selection: selection, screen: screen,
                                         pinnedExpanded: arguments.contains("--expanded"),
+                                        didClose: { [weak self] in self?.islandDidClose() },
                                         openSettings: openSettings, quit: quit)
             }
         } else {
             notch?.tearDown()
             notch = nil
             if menuBar == nil {
-                menuBar = MenuBarController(model: model, jev: jev, selection: selection, openSettings: openSettings, quit: quit)
+                menuBar = MenuBarController(model: model, jev: jev, projects: projects, selection: selection, openSettings: openSettings, quit: quit)
             }
         }
     }
@@ -137,8 +215,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        alive = false
+        relocation.invalidate()
+        settleWork?.cancel()
+        settleWork = nil
+        pointerMonitors.forEach(NSEvent.removeMonitor)
+        pointerMonitors.removeAll()
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+        screenObserver = nil
+        notch?.tearDown()
+        menuBar?.tearDown()
         model?.stop()
         jev?.stop()
+        projects?.stop()
     }
 }
 

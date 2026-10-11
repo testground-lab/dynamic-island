@@ -19,20 +19,26 @@ public struct DisplayInfo: Identifiable, Hashable, Sendable {
 public enum DisplayPreference: Hashable, Sendable {
     case followMouse
     case automatic
+    case allDisplays
     case display(id: UUID, name: String)
 
     public init(defaults: UserDefaults) {
         if let raw = defaults.string(forKey: "islandDisplayID"), let id = UUID(uuidString: raw) {
             self = .display(id: id, name: defaults.string(forKey: "islandDisplayName") ?? "Display")
         } else {
-            self = defaults.string(forKey: "islandDisplayMode") == "automatic" ? .automatic : .followMouse
+            switch defaults.string(forKey: "islandDisplayMode") {
+            case "automatic": self = .automatic
+            case "allDisplays": self = .allDisplays
+            default: self = .followMouse
+            }
         }
     }
 
     public func save(to defaults: UserDefaults) {
         switch self {
-        case .followMouse, .automatic:
-            defaults.set(self == .automatic ? "automatic" : "followMouse", forKey: "islandDisplayMode")
+        case .followMouse, .automatic, .allDisplays:
+            let mode = self == .automatic ? "automatic" : self == .allDisplays ? "allDisplays" : "followMouse"
+            defaults.set(mode, forKey: "islandDisplayMode")
             defaults.removeObject(forKey: "islandDisplayID")
             defaults.removeObject(forKey: "islandDisplayName")
         case .display(let id, let name):
@@ -53,6 +59,7 @@ public enum DisplayTarget: Hashable, Sendable {
     }
 
     /// A missing fixed choice follows the mouse without erasing the saved UUID.
+    /// All displays has no single target; it resolves like Follow mouse for single-target callers.
     public static func resolve(
         _ preference: DisplayPreference, displays: [DisplayInfo], pointerDisplayID: UUID? = nil,
         forceMenuBar: Bool = false
@@ -66,6 +73,29 @@ public enum DisplayTarget: Hashable, Sendable {
         }
         let display = displays.first { $0.id == pointerDisplayID } ?? displays.first
         return display.map { .island(id: $0.id, notched: $0.hasNotch) } ?? .menuBar
+    }
+
+    /// Displays that each get an island, or nil for the single-island path
+    /// (another mode, `--menubar`, or no displays).
+    public static func allDisplayIDs(_ preference: DisplayPreference, displays: [DisplayInfo],
+                                     forceMenuBar: Bool = false) -> [UUID]? {
+        guard preference == .allDisplays, !forceMenuBar, !displays.isEmpty else { return nil }
+        return DisplayDiff(current: [], available: displays.map(\.id)).added
+    }
+}
+
+/// All displays mode: which per-display islands to create, tear down or re-place.
+public struct DisplayDiff: Equatable, Sendable {
+    public var added: [UUID]
+    public var removed: Set<UUID>
+    public var kept: [UUID]
+
+    public init(current: Set<UUID>, available: [UUID]) {
+        var seen = Set<UUID>()
+        let unique = available.filter { seen.insert($0).inserted }
+        added = unique.filter { !current.contains($0) }
+        kept = unique.filter(current.contains)
+        removed = current.subtracting(unique)
     }
 }
 

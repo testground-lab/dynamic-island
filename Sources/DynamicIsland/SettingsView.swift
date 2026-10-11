@@ -64,6 +64,7 @@ struct SettingsView: View {
             Section("Display") {
                 Picker("Show island on", selection: $displayPreference) {
                     Text("Follow mouse").tag(DisplayPreference.followMouse)
+                    Text("All displays").tag(DisplayPreference.allDisplays)
                     Text("Automatic (notch)").tag(DisplayPreference.automatic)
                     ForEach(displays) { display in
                         Text(displayLabels[display.id] ?? display.name)
@@ -78,7 +79,7 @@ struct SettingsView: View {
                     preference.save(to: .standard)
                     displayChanged()
                 }
-                Text("Follow mouse moves the closed island to the pointer’s display after a short pause; an open island stays put until closed. Automatic uses a notch or the menu bar. Other displays show a floating pill below the menu band. A disconnected fixed display follows the mouse until it reconnects.")
+                Text("Follow mouse moves the island to the pointer’s display after a short pause; an open island stays put. All displays shows one on every display. Automatic uses the notch or the menu bar. A disconnected fixed display follows the mouse until it reconnects.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -14,13 +14,40 @@ import Testing
     #expect(DisplayTarget.resolve(preference, displays: [internalDisplay]) == .island(id: internalDisplay.id, notched: true))
     #expect(DisplayTarget.resolve(preference, displays: []) == .menuBar)
     #expect(DisplayTarget.resolve(preference, displays: [external]) == .island(id: external.id, notched: false))
-    for mode in [DisplayPreference.followMouse, .automatic, preference] {
+    for mode in [DisplayPreference.followMouse, .automatic, .allDisplays, preference] {
         #expect(DisplayTarget.resolve(mode, displays: [external, internalDisplay], pointerDisplayID: external.id, forceMenuBar: true) == .menuBar)
     }
     #expect(DisplayTarget.resolve(.followMouse, displays: [internalDisplay, external], pointerDisplayID: external.id) == .island(id: external.id, notched: false))
     #expect(DisplayTarget.resolve(.display(id: UUID(), name: "Missing"), displays: [internalDisplay, external], pointerDisplayID: external.id) == .island(id: external.id, notched: false))
     #expect(DisplayTarget.resolve(.followMouse, displays: [external], pointerDisplayID: UUID()) == .island(id: external.id, notched: false))
     #expect(DisplayTarget.resolve(.followMouse, displays: []) == .menuBar)
+    #expect(DisplayTarget.resolve(.allDisplays, displays: []) == .menuBar)
+}
+
+@Test func allDisplaysDiffKeepsPlacesAndRemovesByStableID() {
+    let (a, b, c) = (UUID(), UUID(), UUID())
+    let diff = DisplayDiff(current: [a, b], available: [c, b])
+    #expect(diff.added == [c])
+    #expect(diff.kept == [b])
+    #expect(diff.removed == [a])
+    #expect(DisplayDiff(current: [], available: [a, b]).added == [a, b])
+    #expect(DisplayDiff(current: [a, b], available: []).removed == [a, b])
+    let same = DisplayDiff(current: [a, b], available: [b, a])
+    #expect(same.added.isEmpty && same.removed.isEmpty && same.kept == [b, a])
+    #expect(DisplayDiff(current: [], available: [a, a]).added == [a])
+    #expect(DisplayDiff(current: [a], available: [a, a]).kept == [a])
+}
+
+@Test func allDisplaysModeNeedsDisplaysAndYieldsToMenuBarFlag() {
+    let builtin = DisplayInfo(id: UUID(), name: "Built-in", hasNotch: true, isBuiltin: true)
+    let external = DisplayInfo(id: UUID(), name: "Studio", hasNotch: false, isBuiltin: false)
+    #expect(DisplayTarget.allDisplayIDs(.allDisplays, displays: [external, builtin]) == [external.id, builtin.id])
+    #expect(DisplayTarget.allDisplayIDs(.allDisplays, displays: [external, external, builtin]) == [external.id, builtin.id])
+    #expect(DisplayTarget.allDisplayIDs(.allDisplays, displays: [external], forceMenuBar: true) == nil)
+    #expect(DisplayTarget.allDisplayIDs(.allDisplays, displays: []) == nil)
+    for mode in [DisplayPreference.followMouse, .automatic, .display(id: external.id, name: external.name)] {
+        #expect(DisplayTarget.allDisplayIDs(mode, displays: [external, builtin]) == nil)
+    }
 }
 
 @Test func displayPreferencesPersistAndDoNotForgetDisconnectedDisplay() throws {
@@ -39,6 +66,12 @@ import Testing
     #expect(DisplayPreference(defaults: defaults) == preference)
     DisplayPreference.automatic.save(to: defaults)
     #expect(DisplayPreference(defaults: defaults) == .automatic)
+    #expect(defaults.object(forKey: "islandDisplayID") == nil)
+    #expect(defaults.object(forKey: "islandDisplayName") == nil)
+    preference.save(to: defaults)
+    DisplayPreference.allDisplays.save(to: defaults)
+    #expect(DisplayPreference(defaults: defaults) == .allDisplays)
+    #expect(defaults.string(forKey: "islandDisplayMode") == "allDisplays")
     #expect(defaults.object(forKey: "islandDisplayID") == nil)
     #expect(defaults.object(forKey: "islandDisplayName") == nil)
     DisplayPreference.followMouse.save(to: defaults)

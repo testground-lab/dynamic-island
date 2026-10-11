@@ -3,7 +3,7 @@
 A notch "dynamic island" for a local [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) gateway:
 per-account plan limits (Claude / Codex windows and reset times) and token usage by account and model
 for today, 7 days, 30 days and 6 months, plus [Jev usage](#jev) and [local project usage](#projects) pages.
-The default **Follow mouse** mode moves the island with the pointer. Settings also offers **Automatic** (a notched display, or the menu-bar fallback) and fixed connected displays. A fixed display that disconnects falls back to Follow mouse without erasing the saved choice. Nonnotched displays use a floating pill centered in the menu-bar band, with a compact open body and no hardware-notch shoulders; `--menubar` overrides the saved display choice.
+The default **Follow mouse** mode moves the island with the pointer. Settings also offers **All displays** (an island on every screen, nothing moves), **Automatic** (a notched display, or the menu-bar fallback) and fixed connected displays. A fixed display that disconnects falls back to Follow mouse without erasing the saved choice. Nonnotched displays use a floating pill centered in the menu-bar band, with a compact open body and no hardware-notch shoulders; `--menubar` overrides the saved display choice.
 
 ## Build and run
 

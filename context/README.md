@@ -33,6 +33,7 @@ Requirements and decisions for this project, one per file, so new sessions have 
 - [23-complete-project-usage-index](requirements/23-complete-project-usage-index.md): Complete available supported project history with resumable metadata-only indexing
 - [24-top-attached-external-island](requirements/24-top-attached-external-island.md): Flush top-center placement on non-notched external displays (superseded by 25)
 - [25-menu-bar-centered-external-island](requirements/25-menu-bar-centered-external-island.md): Center the external idle pill in the menu band and remove open-body shoulder margins
+- [26-all-displays](requirements/26-all-displays.md): Keep an island on every display
 
 ## Decisions
 - [0001-native-swiftui-lsuielement](decisions/0001-native-swiftui-lsuielement.md): Native SwiftUI app, LSUIElement

@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let selection = DashboardSelection(defaults: .standard)
     private var settings: SettingsWindowController!
     private var notch: NotchController?
+    private var islands: [UUID: NotchController] = [:] // All displays, keyed by display UUID
     private var menuBar: MenuBarController?
     private var screenObserver: NSObjectProtocol?
     private var pointerMonitors: [Any] = []
@@ -97,8 +98,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settleWork?.cancel()
         settleWork = nil
         relocation.invalidate()
-        let target = resolvedTarget()
         let screens = NSScreen.screens
+        if let ids = DisplayTarget.allDisplayIDs(DisplayPreference(defaults: .standard),
+                                                 displays: screens.compactMap(\.displayInfo),
+                                                 forceMenuBar: arguments.contains("--menubar")) {
+            layoutAllDisplays(screens, ids: ids)
+            return
+        }
+        if !islands.isEmpty {
+            // Leaving All displays, or it lost every display: the single island starts afresh at its target.
+            islands.values.forEach { $0.tearDown() }
+            islands.removeAll()
+            hasLaidOut = false
+        }
+        let target = resolvedTarget()
         let available = Set(screens.compactMap { $0.displayInfo?.id })
         if !hasLaidOut {
             hasLaidOut = true
@@ -118,6 +131,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// One independent island per display. Nothing follows the pointer, so none moves or disappears.
+    private func layoutAllDisplays(_ screens: [NSScreen], ids: [UUID]) {
+        notch?.tearDown()
+        notch = nil
+        menuBar?.tearDown()
+        menuBar = nil
+        let byID = Dictionary(screens.compactMap { screen in screen.displayInfo.map { ($0.id, screen) } },
+                              uniquingKeysWith: { first, _ in first })
+        let diff = DisplayDiff(current: Set(islands.keys), available: ids)
+        for id in diff.removed {
+            islands[id]?.dismissForRemovedScreen()
+            islands.removeValue(forKey: id)?.tearDown()
+        }
+        for id in diff.kept { if let screen = byID[id] { islands[id]?.place(on: screen) } }
+        for id in diff.added { if let screen = byID[id] { islands[id] = makeIsland(on: screen, didClose: {}) } }
+    }
+
     /// Owned by the app, so pointer following also works while Automatic is a menu-bar item.
     private func installPointerMonitors() {
         let moves: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
@@ -131,7 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func routePointer() {
-        guard alive else { return }
+        guard alive, islands.isEmpty else { return }
         let token = relocation.observe(resolvedTarget())
         if relocation.candidate == nil {
             settleWork?.cancel()
@@ -159,6 +189,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let target = relocation.applyIfReady(expanded: notch?.isExpanded ?? false) { present(target) }
     }
 
+    private func makeIsland(on screen: NSScreen, didClose: @escaping () -> Void) -> NotchController {
+        NotchController(model: model, jev: jev, projects: projects, selection: selection, screen: screen,
+                        pinnedExpanded: arguments.contains("--expanded"), didClose: didClose,
+                        openSettings: { [weak self] in self?.settings.show() }, quit: { NSApp.terminate(nil) })
+    }
+
     private func present(_ target: DisplayTarget) {
         let openSettings: () -> Void = { [weak self] in self?.settings.show() }
         let quit: () -> Void = { NSApp.terminate(nil) }
@@ -169,10 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let notch {
                 notch.place(on: screen)
             } else {
-                notch = NotchController(model: model, jev: jev, projects: projects, selection: selection, screen: screen,
-                                        pinnedExpanded: arguments.contains("--expanded"),
-                                        didClose: { [weak self] in self?.islandDidClose() },
-                                        openSettings: openSettings, quit: quit)
+                notch = makeIsland(on: screen, didClose: { [weak self] in self?.islandDidClose() })
             }
         } else {
             notch?.tearDown()
@@ -224,6 +257,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         screenObserver = nil
         notch?.tearDown()
+        islands.values.forEach { $0.tearDown() }
         menuBar?.tearDown()
         model?.stop()
         jev?.stop()
